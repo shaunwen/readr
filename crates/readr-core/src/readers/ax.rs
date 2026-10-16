@@ -60,3 +60,23 @@ fn copy_attribute(element: AXUIElementRef, name: &str) -> Option<CFTypeRef> {
     };
     (status == AX_SUCCESS && !value.is_null()).then_some(value)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accessibility_queries_fail_closed_without_crashing() {
+        // given
+        let pid = std::process::id() as i32;
+
+        // when
+        let trusted = trusted();
+        let title = focused_window_title(pid);
+
+        // then
+        if !trusted {
+            assert_eq!(title, None);
+        }
+    }
+}
