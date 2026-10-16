@@ -95,6 +95,13 @@ pub fn list(app: &App) -> Result<String> {
             "No active books. Add one with `readr shelf add <title>`."
         );
     }
+    if !active.is_empty() {
+        let _ = writeln!(
+            out,
+            "{:<22} {:<34} {:>10}  {:<9} {:<10} {:>6}",
+            "goal", "book", "at", "reader", "last read", "read"
+        );
+    }
     for row in &active {
         let _ = writeln!(
             out,
