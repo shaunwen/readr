@@ -71,6 +71,8 @@ pub fn doctor(app: &App) -> Result<String> {
         }
     }
     let log = home.join("Library/Logs/readr/daemon.log");
+    let log_text = std::fs::read_to_string(&log).unwrap_or_default();
+    report_window_focus(&mut report, app, &log_text)?;
     if let Ok(text) = std::fs::read_to_string(&log) {
         let denied: Vec<&str> = text
             .lines()
@@ -177,6 +179,40 @@ pub fn doctor(app: &App) -> Result<String> {
     ))
 }
 
+const ACCESSIBILITY: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+
+fn report_window_focus(report: &mut Report, app: &App, log: &str) -> Result<()> {
+    if !app.config.tracking.window_focus {
+        report.info("window focus", "off in config (tracking.window_focus)");
+        return Ok(());
+    }
+    match last_focus_line(log) {
+        Some(line) if line.contains("tracking on") => report.ok(
+            "window focus",
+            format!(
+                "daemon can see the focused window; pages count until {} min without input",
+                app.config.tracking.away_minutes
+            ),
+        ),
+        Some(_) => report.warn(
+            "window focus",
+            format!(
+                "daemon lacks Accessibility: grant it to {} (open \"{ACCESSIBILITY}\")",
+                std::env::current_exe()?.display()
+            ),
+        ),
+        None => report.info("window focus", "the daemon has not reported yet"),
+    }
+    Ok(())
+}
+
+fn last_focus_line(log: &str) -> Option<&str> {
+    log.lines()
+        .rev()
+        .find(|line| line.contains("window focus tracking"))
+}
+
 pub fn init(app: &App) -> Result<String> {
     let mut out = String::new();
     if app.paths.config_file.exists() {
@@ -191,8 +227,27 @@ pub fn init(app: &App) -> Result<String> {
     let _ = writeln!(out, "database: {}", app.paths.db_file.display());
     let _ = writeln!(
         out,
-        "\nnext:\n  1. edit goals, reminder times and email in the config\n  2. readr email set-password      (if you set nightly.email_to)\n  3. readr daemon install\n  4. grant Full Disk Access to {} (open \"{FULL_DISK_ACCESS}\")\n  5. readr shelf add <title> --goal <goal>\n  6. readr doctor",
+        "\nnext:\n  1. edit goals, reminder times and email in the config\n  2. readr email set-password      (if you set nightly.email_to)\n  3. readr daemon install\n  4. grant Full Disk Access and Accessibility to {} (open \"{FULL_DISK_ACCESS}\")\n  5. readr shelf add <title> --goal <goal>\n  6. readr doctor",
         std::env::current_exe()?.display()
     );
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn latest_window_focus_line_wins() {
+        // given
+        let log = "2026-10-16T09:00:00Z window focus tracking off: grant Accessibility\n\
+                   2026-10-16T09:00:15Z config reloaded\n\
+                   2026-10-16T09:05:00Z window focus tracking on\n";
+
+        // when
+        let line = last_focus_line(log);
+
+        // then
+        assert!(line.unwrap().ends_with("window focus tracking on"));
+    }
 }
