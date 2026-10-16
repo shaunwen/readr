@@ -1,0 +1,8 @@
+[package]
+name = "readr-core"
+description = "Reading sessions, shelf, config and reader adapters for readr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

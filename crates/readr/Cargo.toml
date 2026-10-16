@@ -1,0 +1,9 @@
+[package]
+name = "readr"
+description = "Track daily reading across bookokrat, Preview and Apple Books"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+readr-core = { path = "../readr-core" }
