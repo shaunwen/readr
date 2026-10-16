@@ -1,3 +1,4 @@
+pub mod apple_books;
 pub mod bookokrat;
 pub mod desktop;
 pub mod preview;
