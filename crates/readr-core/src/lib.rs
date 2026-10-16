@@ -3,6 +3,7 @@ pub mod db;
 pub mod model;
 pub mod paths;
 pub mod readers;
+pub mod schedule;
 pub mod session;
 pub mod stats;
 pub mod tracker;
