@@ -1,1 +1,13 @@
 /target
+
+# readr keeps its database in ~/.local/share/readr; never commit one, or reader data copied for debugging
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+bookmarks.json
+*.ViewState.plist
