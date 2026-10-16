@@ -1,5 +1,6 @@
 pub mod bookokrat;
 pub mod desktop;
+pub mod preview;
 
 use std::path::Path;
 
