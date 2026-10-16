@@ -1,4 +1,5 @@
 pub mod apple_books;
+mod ax;
 pub mod bookokrat;
 pub mod desktop;
 pub mod preview;
@@ -39,20 +40,52 @@ pub enum ReaderEvent {
         reader: Reader,
         at: Timestamp,
     },
+    Away {
+        book: BookRef,
+        last_input_at: Timestamp,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presence {
+    Active,
+    Away { last_input_at: Timestamp },
+    Unknown,
 }
 
 pub struct PollContext<'a> {
     pub now: Timestamp,
     pub desktop: &'a dyn Desktop,
-    pub idle_limit: SignedDuration,
+    pub away_after: SignedDuration,
+    pub window_focus: bool,
     pub library_dirs: &'a [std::path::PathBuf],
 }
 
 impl PollContext<'_> {
-    pub fn user_is_active(&self) -> bool {
-        self.desktop
-            .idle()
-            .is_some_and(|idle| idle < self.idle_limit)
+    pub fn presence(&self) -> Presence {
+        match self.desktop.idle() {
+            Some(idle) if idle < self.away_after => Presence::Active,
+            Some(idle) => Presence::Away {
+                last_input_at: self.now - idle,
+            },
+            None => Presence::Unknown,
+        }
+    }
+
+    pub fn reading_event(&self, book: BookRef, position: Option<Position>) -> Option<ReaderEvent> {
+        match self.presence() {
+            Presence::Active => Some(ReaderEvent::Activity {
+                book,
+                at: self.now,
+                kind: ActivityKind::Focused,
+                position,
+            }),
+            Presence::Away { last_input_at } => Some(ReaderEvent::Away {
+                book,
+                last_input_at,
+            }),
+            Presence::Unknown => None,
+        }
     }
 
     pub fn in_library(&self, path: &Path) -> bool {
@@ -102,6 +135,8 @@ pub(crate) mod fake {
         pub preview_document: RefCell<Option<PathBuf>>,
         pub pages: RefCell<HashMap<PathBuf, u32>>,
         pub titles: RefCell<HashMap<PathBuf, String>>,
+        pub window_title: RefCell<Option<String>>,
+        pub trusted: RefCell<bool>,
     }
 
     impl FakeDesktop {
@@ -136,6 +171,17 @@ pub(crate) mod fake {
 
         fn document_title(&self, path: &Path) -> Option<String> {
             self.titles.borrow().get(path).cloned()
+        }
+
+        fn accessibility_trusted(&self) -> bool {
+            *self.trusted.borrow()
+        }
+
+        fn focused_window_title(&self) -> Option<String> {
+            if !*self.trusted.borrow() {
+                return None;
+            }
+            self.window_title.borrow().clone()
         }
     }
 }

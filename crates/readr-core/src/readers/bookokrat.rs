@@ -11,6 +11,7 @@ use crate::model::{Position, Reader};
 use crate::session::ActivityKind;
 
 const PROCESS: &str = "bookokrat";
+const TITLE_PREFIX: &str = "bookokrat \u{2014} ";
 
 pub fn default_root(home: &Path) -> PathBuf {
     home.join("Library/Application Support/bookokrat/libraries")
@@ -47,11 +48,17 @@ impl Bookmark {
     }
 }
 
+struct Known {
+    book: BookRef,
+    position: Position,
+    last_read: Timestamp,
+}
+
 pub struct Bookokrat {
     root: PathBuf,
     stale_after: SignedDuration,
     file_mtimes: HashMap<PathBuf, SystemTime>,
-    last_read: HashMap<String, Timestamp>,
+    known: HashMap<String, Known>,
     primed: bool,
     was_running: bool,
 }
@@ -62,7 +69,7 @@ impl Bookokrat {
             root,
             stale_after: SignedDuration::from_mins(10),
             file_mtimes: HashMap::new(),
-            last_read: HashMap::new(),
+            known: HashMap::new(),
             primed: false,
             was_running: false,
         }
@@ -98,18 +105,29 @@ impl Bookokrat {
                 .absolute_path
                 .clone()
                 .unwrap_or_else(|| library.join(&name).to_string_lossy().into_owned());
-            if self.last_read.get(&locator) == Some(&bookmark.last_read) {
+            if self
+                .known
+                .get(&locator)
+                .is_some_and(|known| known.last_read == bookmark.last_read)
+            {
                 continue;
             }
-            self.last_read.insert(locator.clone(), bookmark.last_read);
             let book = BookRef {
                 reader: Reader::Bookokrat,
                 title: bookmark.book_title.clone().or_else(|| file_title(&name)),
                 author: bookmark.book_author.clone(),
                 collections: Vec::new(),
-                locator,
+                locator: locator.clone(),
             };
             let position = bookmark.position();
+            self.known.insert(
+                locator,
+                Known {
+                    book: book.clone(),
+                    position: position.clone(),
+                    last_read: bookmark.last_read,
+                },
+            );
             let age = now.duration_since(bookmark.last_read);
             let fresh = age <= self.stale_after && age >= -SignedDuration::from_mins(1);
             if self.primed && fresh {
@@ -129,6 +147,24 @@ impl Bookokrat {
         }
         Ok(events)
     }
+
+    fn book_for_title(&self, title: &str) -> Option<&Known> {
+        let stem = focused_book_stem(title)?;
+        self.known
+            .values()
+            .filter(|known| {
+                Path::new(&known.book.locator)
+                    .file_stem()
+                    .is_some_and(|s| s.to_string_lossy() == stem)
+            })
+            .max_by_key(|known| known.last_read)
+    }
+}
+
+fn focused_book_stem(title: &str) -> Option<&str> {
+    let start = title.find(TITLE_PREFIX)? + TITLE_PREFIX.len();
+    let stem = title[start..].trim();
+    (!stem.is_empty()).then_some(stem)
 }
 
 pub fn check(root: &Path) -> Result<usize> {
@@ -159,9 +195,18 @@ impl ReaderAdapter for Bookokrat {
             events.extend(self.read_changed(&path, ctx.now)?);
         }
         events.sort_by_key(|event| match event {
-            ReaderEvent::Activity { at, .. } | ReaderEvent::Position { at, .. } => *at,
-            ReaderEvent::Closed { at, .. } => *at,
+            ReaderEvent::Activity { at, .. }
+            | ReaderEvent::Position { at, .. }
+            | ReaderEvent::Closed { at, .. } => *at,
+            ReaderEvent::Away { last_input_at, .. } => *last_input_at,
         });
+        if running
+            && ctx.window_focus
+            && let Some(title) = ctx.desktop.focused_window_title()
+            && let Some(known) = self.book_for_title(&title)
+        {
+            events.extend(ctx.reading_event(known.book.clone(), Some(known.position.clone())));
+        }
         if self.was_running && !running {
             events.push(ReaderEvent::Closed {
                 reader: Reader::Bookokrat,
@@ -222,7 +267,8 @@ mod tests {
             let ctx = PollContext {
                 now: now.parse().unwrap(),
                 desktop: &self.desktop,
-                idle_limit: SignedDuration::from_mins(2),
+                away_after: SignedDuration::from_mins(15),
+                window_focus: true,
                 library_dirs: &[],
             };
             adapter.poll(&ctx).unwrap()
@@ -330,6 +376,142 @@ mod tests {
             }]
         ));
         assert!(second.is_empty());
+    }
+
+    fn focus(fixture: &Fixture, title: &str, idle_mins: i64) {
+        fixture.desktop.trusted.replace(true);
+        fixture.desktop.window_title.replace(Some(title.into()));
+        fixture
+            .desktop
+            .idle
+            .replace(Some(SignedDuration::from_mins(idle_mins)));
+    }
+
+    #[test]
+    fn focused_bookokrat_window_counts_while_reading_a_long_page() {
+        // given
+        let fixture = Fixture::new();
+        fixture.write("lib", "2026-10-16T09:00:00Z", 3);
+        let mut adapter = fixture.adapter();
+        fixture.poll(&mut adapter, "2026-10-16T09:00:05Z");
+        focus(&fixture, "bookokrat \u{2014} walden", 8);
+
+        // when
+        let events = fixture.poll(&mut adapter, "2026-10-16T09:08:00Z");
+
+        // then
+        let [
+            ReaderEvent::Activity {
+                book,
+                kind,
+                position,
+                ..
+            },
+        ] = events.as_slice()
+        else {
+            panic!("expected one focused tick, got {events:?}");
+        };
+        assert_eq!(*kind, ActivityKind::Focused);
+        assert_eq!(book.locator, "/Books/communication/walden.pdf");
+        assert_eq!(position.as_ref().unwrap().label.as_deref(), Some("p.4/300"));
+    }
+
+    #[test]
+    fn no_input_past_the_away_limit_reports_away() {
+        // given
+        let fixture = Fixture::new();
+        fixture.write("lib", "2026-10-16T09:00:00Z", 3);
+        let mut adapter = fixture.adapter();
+        fixture.poll(&mut adapter, "2026-10-16T09:00:05Z");
+        focus(&fixture, "bookokrat \u{2014} walden", 20);
+
+        // when
+        let events = fixture.poll(&mut adapter, "2026-10-16T09:20:00Z");
+
+        // then
+        let [ReaderEvent::Away { last_input_at, .. }] = events.as_slice() else {
+            panic!("expected away, got {events:?}");
+        };
+        assert_eq!(
+            *last_input_at,
+            "2026-10-16T09:00:00Z".parse::<Timestamp>().unwrap()
+        );
+    }
+
+    #[test]
+    fn other_focused_windows_are_not_reading() {
+        // given
+        let fixture = Fixture::new();
+        fixture.write("lib", "2026-10-16T09:00:00Z", 3);
+        let mut adapter = fixture.adapter();
+        fixture.poll(&mut adapter, "2026-10-16T09:00:05Z");
+        focus(&fixture, "nvim ~/notes", 1);
+
+        // when
+        let events = fixture.poll(&mut adapter, "2026-10-16T09:03:00Z");
+
+        // then
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn window_focus_needs_accessibility_and_the_setting() {
+        // given
+        let fixture = Fixture::new();
+        fixture.write("lib", "2026-10-16T09:00:00Z", 3);
+        let mut adapter = fixture.adapter();
+        fixture.poll(&mut adapter, "2026-10-16T09:00:05Z");
+        focus(&fixture, "bookokrat \u{2014} walden", 1);
+        fixture.desktop.trusted.replace(false);
+
+        // when
+        let events = fixture.poll(&mut adapter, "2026-10-16T09:03:00Z");
+
+        // then
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn same_stem_in_two_formats_picks_the_most_recently_read() {
+        // given
+        let mut adapter = Bookokrat::new(PathBuf::from("/none"));
+        for (locator, last_read) in [
+            ("/Books/ulysses.pdf", "2026-10-10T09:00:00Z"),
+            ("/Books/ulysses.epub", "2026-10-15T09:00:00Z"),
+        ] {
+            adapter.known.insert(
+                locator.into(),
+                Known {
+                    book: BookRef {
+                        reader: Reader::Bookokrat,
+                        locator: locator.into(),
+                        title: None,
+                        author: None,
+                        collections: Vec::new(),
+                    },
+                    position: Position::default(),
+                    last_read: last_read.parse().unwrap(),
+                },
+            );
+        }
+
+        // when
+        let known = adapter.book_for_title("bookokrat \u{2014} ulysses");
+
+        // then
+        assert_eq!(known.unwrap().book.locator, "/Books/ulysses.epub");
+    }
+
+    #[test]
+    fn library_view_title_names_no_book() {
+        // given
+        let title = "bookokrat";
+
+        // when
+        let stem = focused_book_stem(title);
+
+        // then
+        assert_eq!(stem, None);
     }
 
     #[test]

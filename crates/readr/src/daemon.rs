@@ -7,7 +7,7 @@ use readr_core::config::Config;
 use readr_core::readers::apple_books::{self, AppleBooks};
 use readr_core::readers::bookokrat::{self, Bookokrat};
 use readr_core::readers::preview::{self, Preview};
-use readr_core::readers::{MacDesktop, PollContext, ReaderAdapter};
+use readr_core::readers::{Desktop, MacDesktop, PollContext, ReaderAdapter};
 use readr_core::session::Rules;
 use readr_core::tracker::Tracker;
 
@@ -31,6 +31,7 @@ pub fn run(mut app: App) -> Result<()> {
     let mut config_mtime = mtime(&app.paths.config_file);
     let mut last_errors: Vec<String> = Vec::new();
     let mut reminders = Reminders::default();
+    let mut focus_trusted = None;
     log(&format!(
         "started; config {}, database {}",
         app.paths.config_file.display(),
@@ -53,10 +54,31 @@ pub fn run(mut app: App) -> Result<()> {
             }
         }
 
+        if app.config.tracking.window_focus {
+            let trusted = MacDesktop.accessibility_trusted();
+            if focus_trusted != Some(trusted) {
+                if trusted {
+                    log("window focus tracking on");
+                } else {
+                    if focus_trusted.is_none() {
+                        MacDesktop.request_accessibility();
+                    }
+                    log(&format!(
+                        "window focus tracking off: grant Accessibility to {} in System Settings > Privacy & Security > Accessibility",
+                        std::env::current_exe()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|_| "readr".into())
+                    ));
+                }
+                focus_trusted = Some(trusted);
+            }
+        }
+
         let ctx = PollContext {
             now: Timestamp::now(),
             desktop: &MacDesktop,
-            idle_limit: SignedDuration::from_secs(i64::from(app.config.tracking.idle_seconds)),
+            away_after: SignedDuration::from_mins(i64::from(app.config.tracking.away_minutes)),
+            window_focus: app.config.tracking.window_focus,
             library_dirs: &app.config.library_dirs,
         };
         match tracker.poll(&app.db, &ctx) {

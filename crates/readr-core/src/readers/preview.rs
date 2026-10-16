@@ -11,7 +11,6 @@ use plist::Value;
 use super::desktop::PREVIEW_BUNDLE;
 use super::{BookRef, PollContext, ReaderAdapter, ReaderEvent, file_title};
 use crate::model::{Position, Reader};
-use crate::session::ActivityKind;
 
 pub fn default_view_state(home: &Path) -> PathBuf {
     home.join(
@@ -151,17 +150,12 @@ impl ReaderAdapter for Preview {
         let mut events = self.position_events(ctx)?;
         let front = ctx.desktop.frontmost_bundle_id();
         if front.as_deref() == Some(PREVIEW_BUNDLE)
-            && ctx.user_is_active()
             && let Some(path) = ctx.desktop.preview_front_document()
             && ctx.in_library(&path)
         {
             let position = self.position(&path, ctx);
-            events.push(ReaderEvent::Activity {
-                book: self.book(&path, ctx),
-                at: ctx.now,
-                kind: ActivityKind::Focused,
-                position,
-            });
+            let book = self.book(&path, ctx);
+            events.extend(ctx.reading_event(book, position));
         }
         Ok(events)
     }
@@ -247,6 +241,7 @@ mod tests {
 
     use super::*;
     use crate::readers::fake::FakeDesktop;
+    use crate::session::ActivityKind;
 
     struct Fixture {
         dir: tempfile::TempDir,
@@ -315,7 +310,8 @@ mod tests {
             let ctx = PollContext {
                 now: now.parse().unwrap(),
                 desktop: &self.desktop,
-                idle_limit: SignedDuration::from_mins(2),
+                away_after: SignedDuration::from_mins(15),
+                window_focus: true,
                 library_dirs: &self.library,
             };
             adapter.poll(&ctx).unwrap()
@@ -461,7 +457,7 @@ mod tests {
     }
 
     #[test]
-    fn idle_user_is_not_reading() {
+    fn a_long_page_without_input_still_counts() {
         // given
         let fixture = Fixture::new();
         let book = fixture.book("war-and-peace.pdf", 500);
@@ -476,7 +472,38 @@ mod tests {
         let events = fixture.poll(&mut adapter, "2026-10-16T09:00:00Z");
 
         // then
-        assert!(events.is_empty());
+        assert!(matches!(
+            events.last(),
+            Some(ReaderEvent::Activity {
+                kind: ActivityKind::Focused,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn no_input_past_the_away_limit_is_reported_away() {
+        // given
+        let fixture = Fixture::new();
+        let book = fixture.book("war-and-peace.pdf", 500);
+        fixture.desktop.preview_document.replace(Some(book));
+        fixture
+            .desktop
+            .idle
+            .replace(Some(SignedDuration::from_mins(20)));
+        let mut adapter = fixture.adapter();
+
+        // when
+        let events = fixture.poll(&mut adapter, "2026-10-16T09:00:00Z");
+
+        // then
+        let Some(ReaderEvent::Away { last_input_at, .. }) = events.last() else {
+            panic!("expected away, got {events:?}");
+        };
+        assert_eq!(
+            *last_input_at,
+            "2026-10-16T08:40:00Z".parse::<Timestamp>().unwrap()
+        );
     }
 
     #[test]

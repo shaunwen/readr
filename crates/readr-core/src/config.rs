@@ -46,8 +46,9 @@ pub struct Tracking {
     pub poll_seconds: u64,
     pub max_page_minutes: u32,
     pub last_page_minutes: u32,
-    pub idle_seconds: u32,
+    pub away_minutes: u32,
     pub min_session_seconds: u32,
+    pub window_focus: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,8 +117,10 @@ struct FileTracking {
     poll_seconds: Option<u64>,
     max_page_minutes: Option<u32>,
     last_page_minutes: Option<u32>,
-    idle_seconds: Option<u32>,
+    away_minutes: Option<u32>,
     min_session_seconds: Option<u32>,
+    window_focus: Option<bool>,
+    idle_seconds: Option<u32>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -172,6 +175,9 @@ impl Config {
     }
 
     fn from_file(file: FileConfig, home: &Path) -> Result<Self> {
+        if file.tracking.idle_seconds.is_some() {
+            bail!("tracking.idle_seconds was replaced by tracking.away_minutes");
+        }
         let email = match (file.nightly.email_to, file.nightly.smtp_user) {
             (Some(to), Some(smtp_user)) => Some(Email {
                 to,
@@ -211,8 +217,9 @@ impl Config {
                 poll_seconds: file.tracking.poll_seconds.unwrap_or(15),
                 max_page_minutes: file.tracking.max_page_minutes.unwrap_or(5),
                 last_page_minutes: file.tracking.last_page_minutes.unwrap_or(1),
-                idle_seconds: file.tracking.idle_seconds.unwrap_or(120),
+                away_minutes: file.tracking.away_minutes.unwrap_or(15),
                 min_session_seconds: file.tracking.min_session_seconds.unwrap_or(60),
+                window_focus: file.tracking.window_focus.unwrap_or(true),
             },
             launch: Launch {
                 terminal: file.launch.terminal.unwrap_or(Terminal::Rio),
@@ -240,6 +247,9 @@ impl Config {
         }
         if self.tracking.max_page_minutes == 0 {
             bail!("tracking.max_page_minutes must be at least 1");
+        }
+        if self.tracking.away_minutes == 0 {
+            bail!("tracking.away_minutes must be at least 1");
         }
         let mut keys = HashSet::new();
         for goal in &self.goals {
@@ -476,6 +486,35 @@ mod tests {
 
         // then
         assert_eq!(goal, None);
+    }
+
+    #[test]
+    fn window_focus_is_on_and_away_after_fifteen_minutes_by_default() {
+        // given
+        let text = "";
+
+        // when
+        let tracking = parse(text).unwrap().tracking;
+
+        // then
+        assert!(tracking.window_focus);
+        assert_eq!(tracking.away_minutes, 15);
+    }
+
+    #[test]
+    fn old_idle_seconds_key_explains_its_replacement() {
+        // given
+        let text = "[tracking]\nidle_seconds = 120";
+
+        // when
+        let error = parse(text).unwrap_err();
+
+        // then
+        assert!(
+            error
+                .to_string()
+                .contains("replaced by tracking.away_minutes")
+        );
     }
 
     #[test]

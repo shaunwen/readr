@@ -221,6 +221,22 @@ impl Engine {
         self.finish(session, tail)
     }
 
+    pub fn away(&mut self, source_id: i64, last_input_at: Timestamp) -> Vec<Change> {
+        let page_gap = self.rules.page_gap;
+        let Some(session) = self.open.get_mut(&source_id) else {
+            return Vec::new();
+        };
+        let cutoff = (last_input_at + page_gap).max(session.started_at);
+        if session.last_activity_at <= cutoff {
+            return Vec::new();
+        }
+        let excess = session.last_activity_at.duration_since(cutoff);
+        session.active = (session.active - excess).max(SignedDuration::ZERO);
+        session.last_activity_at = cutoff;
+        session.last_kind = ActivityKind::Focused;
+        vec![Change::Save(session.clone())]
+    }
+
     pub fn update_position(&mut self, source_id: i64, position: Position) -> Vec<Change> {
         let Some(session) = self.open.get_mut(&source_id) else {
             return Vec::new();
@@ -519,6 +535,89 @@ mod tests {
         // then
         assert!(matches!(changes.as_slice(), [Change::Discard(s)] if s.source_id == 2));
         assert_eq!(engine.open_sessions().count(), 1);
+    }
+
+    fn ticks(engine: &mut Engine, source_id: i64, from_min: i64, to_min: i64) {
+        let start = at("2026-10-16T20:00:00");
+        let mut offset = SignedDuration::from_mins(from_min);
+        while offset <= SignedDuration::from_mins(to_min) {
+            engine.record(Activity {
+                source_id,
+                at: start + offset,
+                kind: ActivityKind::Focused,
+                position: None,
+                prior_position: None,
+            });
+            offset += SignedDuration::from_secs(15);
+        }
+    }
+
+    #[test]
+    fn focused_ticks_count_a_page_read_for_longer_than_max_page() {
+        // given
+        let mut engine = engine();
+        engine.record(page_turn(1, "2026-10-16T20:00:00", 10));
+        ticks(&mut engine, 1, 0, 9);
+
+        // when
+        let changes = engine.record(page_turn(1, "2026-10-16T20:09:30", 11));
+
+        // then
+        let Change::Save(session) = changes.last().unwrap() else {
+            panic!("expected save");
+        };
+        assert_eq!(session.active, SignedDuration::from_secs(9 * 60 + 30));
+    }
+
+    #[test]
+    fn stepping_away_trims_back_to_last_input_plus_max_page() {
+        // given
+        let mut engine = engine();
+        engine.record(page_turn(1, "2026-10-16T20:00:00", 10));
+        ticks(&mut engine, 1, 0, 15);
+
+        // when
+        let trimmed = engine.away(1, at("2026-10-16T20:00:00"));
+        let finished = engine.tick(at("2026-10-16T20:16:00"));
+
+        // then
+        assert!(matches!(trimmed.as_slice(), [Change::Save(_)]));
+        let done = finished
+            .iter()
+            .find_map(|c| match c {
+                Change::Finish(s) => Some(s),
+                _ => None,
+            })
+            .expect("finished");
+        assert_eq!(done.active, SignedDuration::from_mins(5));
+        assert_eq!(done.ended_at(), at("2026-10-16T20:05:00"));
+    }
+
+    #[test]
+    fn away_before_the_session_started_empties_it() {
+        // given
+        let mut engine = engine();
+        ticks(&mut engine, 2, 10, 12);
+
+        // when
+        engine.away(2, at("2026-10-16T19:00:00"));
+        let changes = engine.tick(at("2026-10-16T20:20:00"));
+
+        // then
+        assert!(matches!(changes.as_slice(), [Change::Discard(_)]));
+    }
+
+    #[test]
+    fn away_within_the_allowance_changes_nothing() {
+        // given
+        let mut engine = engine();
+        ticks(&mut engine, 2, 0, 4);
+
+        // when
+        let changes = engine.away(2, at("2026-10-16T20:01:00"));
+
+        // then
+        assert!(changes.is_empty());
     }
 
     #[test]

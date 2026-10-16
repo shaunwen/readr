@@ -13,15 +13,22 @@ pub trait Desktop {
     fn preview_front_document(&self) -> Option<PathBuf>;
     fn page_count(&self, path: &Path) -> Option<u32>;
     fn document_title(&self, path: &Path) -> Option<String>;
+    fn accessibility_trusted(&self) -> bool;
+    fn focused_window_title(&self) -> Option<String>;
 }
 
 pub struct MacDesktop;
 
+impl MacDesktop {
+    pub fn request_accessibility(&self) -> bool {
+        super::ax::request_trust()
+    }
+}
+
 impl Desktop for MacDesktop {
     fn frontmost_bundle_id(&self) -> Option<String> {
-        let asn = run("lsappinfo", &["front"])?;
-        let info = run("lsappinfo", &["info", "-only", "bundleid", asn.trim()])?;
-        parse_bundle_id(&info)
+        let info = front_app_info()?;
+        lsappinfo_value(&info, "CFBundleIdentifier")
     }
 
     fn idle(&self) -> Option<SignedDuration> {
@@ -55,6 +62,27 @@ impl Desktop for MacDesktop {
     fn document_title(&self, path: &Path) -> Option<String> {
         mdls(path, "kMDItemTitle").filter(|title| useful_title(title))
     }
+
+    fn accessibility_trusted(&self) -> bool {
+        super::ax::trusted()
+    }
+
+    fn focused_window_title(&self) -> Option<String> {
+        if !super::ax::trusted() {
+            return None;
+        }
+        let info = front_app_info()?;
+        let pid = lsappinfo_value(&info, "pid")?.parse().ok()?;
+        super::ax::focused_window_title(pid)
+    }
+}
+
+fn front_app_info() -> Option<String> {
+    let asn = run("lsappinfo", &["front"])?;
+    run(
+        "lsappinfo",
+        &["info", "-only", "bundleid", "-only", "pid", asn.trim()],
+    )
 }
 
 fn mdls(path: &Path, attribute: &str) -> Option<String> {
@@ -83,8 +111,13 @@ fn run(program: &str, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-fn parse_bundle_id(info: &str) -> Option<String> {
-    let value = info.split_once('=')?.1.trim().trim_matches('"');
+fn lsappinfo_value(info: &str, key: &str) -> Option<String> {
+    let quoted = format!("\"{key}\"");
+    let value = info
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(&quoted)?.trim().strip_prefix('='))?
+        .trim()
+        .trim_matches('"');
     (!value.is_empty() && value != "[ NULL ]").then(|| value.to_string())
 }
 
@@ -101,15 +134,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bundle_id_is_read_from_lsappinfo_output() {
+    fn bundle_id_and_pid_are_read_from_lsappinfo_output() {
         // given
-        let info = "\"CFBundleIdentifier\"=\"com.apple.Preview\"\n";
+        let info = "\"CFBundleIdentifier\"=\"com.raphaelamorim.rio\"\n\"pid\"=4242\n";
 
         // when
-        let bundle = parse_bundle_id(info);
+        let bundle = lsappinfo_value(info, "CFBundleIdentifier");
+        let pid = lsappinfo_value(info, "pid");
 
         // then
-        assert_eq!(bundle.as_deref(), Some("com.apple.Preview"));
+        assert_eq!(bundle.as_deref(), Some("com.raphaelamorim.rio"));
+        assert_eq!(pid.as_deref(), Some("4242"));
     }
 
     #[test]

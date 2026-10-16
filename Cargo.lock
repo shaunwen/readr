@@ -1309,6 +1309,7 @@ name = "readr-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "core-foundation",
  "jiff",
  "plist",
  "rusqlite",

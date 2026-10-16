@@ -86,6 +86,13 @@ impl Tracker {
                 }
                 Ok(changes)
             }
+            ReaderEvent::Away {
+                book,
+                last_input_at,
+            } => match db.source_by_locator(book.reader, &book.locator)? {
+                Some(source) => Ok(self.engine.away(source.id, last_input_at)),
+                None => Ok(Vec::new()),
+            },
             ReaderEvent::Closed { reader, at } => {
                 let open: Vec<i64> = self.engine.open_sessions().map(|s| s.source_id).collect();
                 let mut changes = Vec::new();
@@ -234,7 +241,8 @@ mod tests {
             let ctx = PollContext {
                 now: now.parse().unwrap(),
                 desktop: &self.desktop,
-                idle_limit: SignedDuration::from_mins(2),
+                away_after: SignedDuration::from_mins(15),
+                window_focus: true,
                 library_dirs: &[],
             };
             self.tracker.poll(&self.db, &ctx).unwrap()
@@ -373,6 +381,44 @@ mod tests {
         let sessions = harness.today();
         let start = sessions[0].start_position.as_ref().unwrap();
         assert_eq!(start.label.as_deref(), Some("p.3"));
+    }
+
+    #[test]
+    fn stepping_away_trims_the_stored_session() {
+        // given
+        let mut harness = Harness::new(Vec::new());
+        harness.poll(
+            "2026-10-16T09:00:00Z",
+            vec![turn("2026-10-16T09:00:00Z", 4)],
+        );
+        let start: jiff::Timestamp = "2026-10-16T09:00:00Z".parse().unwrap();
+        for step in 1..=80 {
+            let at = start + SignedDuration::from_secs(15 * step);
+            harness.poll(
+                &at.to_string(),
+                vec![ReaderEvent::Activity {
+                    book: book(),
+                    at,
+                    kind: ActivityKind::Focused,
+                    position: None,
+                }],
+            );
+        }
+
+        // when
+        harness.poll(
+            "2026-10-16T09:20:15Z",
+            vec![ReaderEvent::Away {
+                book: book(),
+                last_input_at: "2026-10-16T09:00:00Z".parse().unwrap(),
+            }],
+        );
+        harness.poll("2026-10-16T09:21:30Z", Vec::new());
+
+        // then
+        let sessions = harness.today();
+        assert!(!sessions[0].open);
+        assert_eq!(sessions[0].active, SignedDuration::from_mins(5));
     }
 
     #[test]

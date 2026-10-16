@@ -9,7 +9,6 @@ use rusqlite::{Connection, OpenFlags};
 use super::desktop::BOOKS_BUNDLE;
 use super::{BookRef, PollContext, ReaderAdapter, ReaderEvent};
 use crate::model::{Position, Reader};
-use crate::session::ActivityKind;
 
 const CORE_DATA_EPOCH_OFFSET: f64 = 978_307_200.0;
 
@@ -124,15 +123,9 @@ impl ReaderAdapter for AppleBooks {
         let mut events = self.refresh(ctx.now)?;
         let front = ctx.desktop.frontmost_bundle_id();
         if front.as_deref() == Some(BOOKS_BUNDLE)
-            && ctx.user_is_active()
             && let Some(asset) = self.current()
         {
-            events.push(ReaderEvent::Activity {
-                book: asset.book(),
-                at: ctx.now,
-                kind: ActivityKind::Focused,
-                position: Some(asset.position()),
-            });
+            events.extend(ctx.reading_event(asset.book(), Some(asset.position())));
         }
         Ok(events)
     }
@@ -201,6 +194,7 @@ fn core_data_time(seconds: f64) -> Option<Timestamp> {
 mod tests {
     use super::*;
     use crate::readers::fake::FakeDesktop;
+    use crate::session::ActivityKind;
 
     struct Fixture {
         dir: tempfile::TempDir,
@@ -252,7 +246,8 @@ mod tests {
             let ctx = PollContext {
                 now: now.parse().unwrap(),
                 desktop: &self.desktop,
-                idle_limit: SignedDuration::from_mins(2),
+                away_after: SignedDuration::from_mins(15),
+                window_focus: true,
                 library_dirs: &[],
             };
             adapter.poll(&ctx).unwrap()

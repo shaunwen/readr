@@ -17,8 +17,9 @@ at = "21:00"
 poll_seconds = 15
 max_page_minutes = 5
 last_page_minutes = 1
-idle_seconds = 120
+away_minutes = 15
 min_session_seconds = 60
+window_focus = true
 
 [launch]
 terminal = "rio"
