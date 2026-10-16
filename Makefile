@@ -1,4 +1,6 @@
 BIN_DIR ?= $(HOME)/workspace/bin
+CODESIGN_IDENTITY ?=
+LAUNCHD_SERVICE := gui/$(shell id -u)/com.shaunwen.readr
 
 .PHONY: build test lint install
 
@@ -13,8 +15,14 @@ lint:
 	cargo clippy --workspace --all-targets -- -D warnings
 
 # Replace instead of overwrite: rewriting a signed binary in place can get it killed on Apple Silicon.
+# macOS keeps Full Disk Access and Accessibility grants only while the signature stays the same;
+# an ad-hoc build changes it every time, a certificate (CODESIGN_IDENTITY) keeps it stable.
 install: lint test build
+ifneq ($(CODESIGN_IDENTITY),)
+	codesign --force --sign "$(CODESIGN_IDENTITY)" --identifier com.shaunwen.readr target/release/readr
+endif
 	mkdir -p $(BIN_DIR)
 	rm -f $(BIN_DIR)/readr
 	cp target/release/readr $(BIN_DIR)/readr
 	@echo "installed $(BIN_DIR)/readr"
+	@launchctl kickstart -k $(LAUNCHD_SERVICE) 2>/dev/null && echo "restarted the daemon" || true
