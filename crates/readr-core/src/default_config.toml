@@ -24,6 +24,9 @@ window_focus = true
 [launch]
 terminal = "rio"
 
+# folders: folder names under library_dirs whose books are suggested for the goal
+# books_collections: Apple Books collections whose books are suggested for the goal
+
 [[goal]]
 key = "health"
 label = "Health"
