@@ -208,3 +208,16 @@ Crates: `ratatui`, `crossterm`, `tui-input` (text fields), `rusqlite` (bundled),
 - One binary (`readr`) with `daemon` subcommands instead of separate daemon and TUI binaries. macOS grants Full Disk Access, Automation and Accessibility per binary, so one binary means one set of permission prompts. The workspace is `readr-core` (config, database, session engine, reader adapters) and `readr` (CLI, daemon loop, TUI).
 - `jiff` for all dates and time zones instead of `time`. `time` cannot read the local UTC offset reliably in a multi-threaded process; `jiff` reads the system time zone database. Dates are converted to `time::Date` only at the ratatui calendar widget.
 - Open sessions are written to the database on every poll, so `status`, reminders and the TUI include the session in progress and a daemon restart loses nothing.
+- The Stats heatmap is drawn directly with ratatui spans instead of the `calendar::Monthly` widget, which would need the `time` crate next to `jiff`.
+- The SMTP password is stored with the macOS `security` CLI (Keychain item `readr-smtp`) instead of the `keyring` crate. That means no extra dependency, and the item is visible in Keychain Access.
+- Text input in the TUI (search, minutes) is a plain string buffer; `tui-input` was not needed.
+- Reminders go to herdr first and fall back to a macOS notification. herdr's response is checked for `"shown":true` because a rate-limited notification still exits 0. herdr finds its socket through `XDG_CONFIG_HOME`, so the daemon must see the same value as your shell (`readr daemon install` copies it into the launchd plist).
+- Verified in bookokrat's source: `pdf_page` is 0-based and `total_chapters` is the page count for PDFs.
+- Apple Books collections are read from `ZBKCOLLECTIONMEMBER` / `ZBKCOLLECTION` and used for goal suggestions.
+- Preview titles come from Spotlight (`kMDItemTitle`), falling back to a cleaned-up file name.
+
+## Not built yet
+- Focused-window layer for bookokrat (Accessibility). Page turns alone undercount pages read for longer than `max_page_minutes`.
+- "Read elsewhere" sessions from iCloud-synced Apple Books progress.
+- PDF page labels (printed page numbers) for display.
+- Daily note line in the notes vault, weekly summary email.
