@@ -150,10 +150,7 @@ mod tests {
     #[test]
     fn same_title_ignores_subtitles_and_punctuation() {
         // given
-        let (books, bookokrat) = (
-            "Moby Dick",
-            "Moby Dick: Or, The Whale",
-        );
+        let (books, bookokrat) = ("Moby Dick", "Moby Dick: Or, The Whale");
 
         // when
         let same = same_title(books, bookokrat);
