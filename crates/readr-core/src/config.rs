@@ -154,6 +154,25 @@ impl Config {
         Ok(config)
     }
 
+    pub fn suggest_goal(&self, locator: &str, collections: &[String]) -> Option<&Goal> {
+        let path = Path::new(locator);
+        let in_folder = |goal: &&Goal| {
+            goal.folders.iter().any(|folder| {
+                path.components()
+                    .any(|part| part.as_os_str().to_string_lossy() == folder.as_str())
+            })
+        };
+        let in_collection = |goal: &&Goal| {
+            goal.books_collections
+                .iter()
+                .any(|name| collections.iter().any(|c| c.eq_ignore_ascii_case(name)))
+        };
+        self.goals
+            .iter()
+            .find(in_folder)
+            .or_else(|| self.goals.iter().find(in_collection))
+    }
+
     pub fn goal(&self, key: &str) -> Option<&Goal> {
         self.goals.iter().find(|goal| goal.key == key)
     }
@@ -429,6 +448,45 @@ mod tests {
 
         // then
         assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn goal_is_suggested_from_the_book_folder() {
+        // given
+        let config = parse(DEFAULT_CONFIG_TOML).unwrap();
+
+        // when
+        let goal = config.suggest_goal(
+            "/Users/reader/Documents/Books/communication/walden.pdf",
+            &[],
+        );
+
+        // then
+        assert_eq!(goal.map(|g| g.key.as_str()), Some("communication"));
+    }
+
+    #[test]
+    fn goal_is_suggested_from_an_apple_books_collection() {
+        // given
+        let config = parse(DEFAULT_CONFIG_TOML).unwrap();
+
+        // when
+        let goal = config.suggest_goal("4F3A9B2C", &["health".to_string()]);
+
+        // then
+        assert_eq!(goal.map(|g| g.key.as_str()), Some("health"));
+    }
+
+    #[test]
+    fn folder_names_must_match_whole_path_components() {
+        // given
+        let config = parse(DEFAULT_CONFIG_TOML).unwrap();
+
+        // when
+        let goal = config.suggest_goal("/Books/communication-extra/x.pdf", &[]);
+
+        // then
+        assert_eq!(goal, None);
     }
 
     #[test]
