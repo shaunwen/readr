@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::time::Duration;
 
@@ -589,6 +589,37 @@ impl Db {
         Ok(totals)
     }
 
+    pub fn last_read_by_book(&self) -> Result<HashMap<i64, Timestamp>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT so.book_id, max(se.ended_at)
+             FROM sessions se JOIN book_sources so ON so.id = se.source_id
+             WHERE so.book_id IS NOT NULL GROUP BY so.book_id",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get::<_, String>(1)?)))?;
+        let mut last = HashMap::new();
+        for row in rows {
+            let (book_id, ended_at) = row?;
+            last.insert(book_id, ended_at.parse()?);
+        }
+        Ok(last)
+    }
+
+    pub fn goal_totals(&self, from: Date, to: Date) -> Result<HashMap<String, SignedDuration>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT goal, sum(active_secs) FROM sessions
+             WHERE goal IS NOT NULL AND day BETWEEN ?1 AND ?2 GROUP BY goal",
+        )?;
+        let rows = stmt.query_map([from.to_string(), to.to_string()], |row| {
+            Ok((row.get(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut totals = HashMap::new();
+        for row in rows {
+            let (goal, secs) = row?;
+            totals.insert(goal, SignedDuration::from_secs(secs));
+        }
+        Ok(totals)
+    }
+
     pub fn notified(&self, day: Date, kind: &str) -> Result<bool> {
         Ok(self
             .conn
@@ -925,6 +956,30 @@ mod tests {
         assert!(!second);
         assert!(db.notified(day(), "nightly").unwrap());
         assert!(!db.notified(day(), "remind@09:00").unwrap());
+    }
+
+    #[test]
+    fn goal_totals_and_last_read_follow_sessions() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.add_book(&book("health"), now()).unwrap();
+        let source = db
+            .upsert_source(Reader::AppleBooks, "asset-1", None, None)
+            .unwrap();
+        db.link_source(source.id, Some(book_id)).unwrap();
+        db.save_session(&session(source.id, 10), false).unwrap();
+        db.save_session(&session(source.id, 6), false).unwrap();
+
+        // when
+        let goals = db.goal_totals(day(), day()).unwrap();
+        let last = db.last_read_by_book().unwrap();
+
+        // then
+        assert_eq!(goals.get("health"), Some(&SignedDuration::from_mins(16)));
+        assert_eq!(
+            last.get(&book_id),
+            Some(&(now() + SignedDuration::from_mins(10)))
+        );
     }
 
     #[test]

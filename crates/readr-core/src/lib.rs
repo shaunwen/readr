@@ -6,4 +6,5 @@ pub mod readers;
 pub mod schedule;
 pub mod session;
 pub mod stats;
+pub mod suggest;
 pub mod tracker;
