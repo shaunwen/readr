@@ -19,7 +19,6 @@ max_page_minutes = 5
 last_page_minutes = 1
 idle_seconds = 120
 min_session_seconds = 60
-use_window_focus = "auto"
 
 [launch]
 terminal = "rio"

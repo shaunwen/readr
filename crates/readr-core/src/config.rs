@@ -48,15 +48,6 @@ pub struct Tracking {
     pub last_page_minutes: u32,
     pub idle_seconds: u32,
     pub min_session_seconds: u32,
-    pub use_window_focus: WindowFocus,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum WindowFocus {
-    Auto,
-    On,
-    Off,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -127,7 +118,6 @@ struct FileTracking {
     last_page_minutes: Option<u32>,
     idle_seconds: Option<u32>,
     min_session_seconds: Option<u32>,
-    use_window_focus: Option<WindowFocus>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -223,7 +213,6 @@ impl Config {
                 last_page_minutes: file.tracking.last_page_minutes.unwrap_or(1),
                 idle_seconds: file.tracking.idle_seconds.unwrap_or(120),
                 min_session_seconds: file.tracking.min_session_seconds.unwrap_or(60),
-                use_window_focus: file.tracking.use_window_focus.unwrap_or(WindowFocus::Auto),
             },
             launch: Launch {
                 terminal: file.launch.terminal.unwrap_or(Terminal::Rio),
