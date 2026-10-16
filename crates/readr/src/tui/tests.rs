@@ -76,7 +76,8 @@ fn data() -> Data {
             book: book(1, "Walden", "communication", BookStatus::Active),
             goal_label: "Communication".into(),
             source: Some(source(1, Some(1), "Walden", Reader::Bookokrat)),
-            progress: Some(0.2),
+            position: Some(Position::new(Some(0.2), Some("p.60/300".into()))),
+            read: 0.05,
             time: SignedDuration::from_mins(40),
             last_read: Some(at("08:07")),
         },
@@ -84,7 +85,8 @@ fn data() -> Data {
             book: book(2, "Ulysses", "communication", BookStatus::Queued),
             goal_label: "Communication".into(),
             source: None,
-            progress: None,
+            position: None,
+            read: 0.0,
             time: SignedDuration::ZERO,
             last_read: None,
         },
@@ -353,7 +355,7 @@ fn shelf_screen_lists_active_and_queued_books() {
     assert!(screen.contains("Shelf · 1 active"), "{screen}");
     assert!(screen.contains("Ulysses"));
     assert!(screen.contains("queued"));
-    assert!(screen.contains("20%"));
+    assert!(screen.contains("p.60/300"));
 }
 
 #[test]

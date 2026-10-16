@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use jiff::{SignedDuration, Timestamp};
 use readr_core::db::{Book, NewBook, Source};
 use readr_core::find::{find_books, find_sources, main_title, same_title};
-use readr_core::model::{BookStatus, Reader, format_progress};
+use readr_core::model::{BookStatus, Position, Reader};
 use readr_core::readers::{Desktop, MacDesktop, file_title};
 use readr_core::stats::format_minutes;
 
@@ -18,33 +18,39 @@ pub struct ShelfRow {
     pub book: Book,
     pub goal_label: String,
     pub source: Option<Source>,
-    pub progress: Option<f64>,
+    pub position: Option<Position>,
+    pub read: f64,
     pub time: SignedDuration,
     pub last_read: Option<Timestamp>,
 }
 
 impl ShelfRow {
+    pub fn position_label(&self) -> String {
+        self.position
+            .as_ref()
+            .map(Position::display)
+            .unwrap_or_else(|| "-".into())
+    }
+
     pub fn time_left(&self) -> Option<SignedDuration> {
-        let progress = self.progress?;
-        if progress < 0.02 || self.time < SignedDuration::from_mins(10) {
+        let at = self.position.as_ref()?.progress?;
+        if self.read < 0.01 || self.time < SignedDuration::from_mins(10) {
             return None;
         }
-        let total = self.time.as_secs_f64() / progress;
-        SignedDuration::try_from_secs_f64(total * (1.0 - progress)).ok()
+        let seconds_per_book = self.time.as_secs_f64() / self.read;
+        SignedDuration::try_from_secs_f64(seconds_per_book * (1.0 - at).max(0.0)).ok()
     }
 }
 
 pub fn rows(app: &App) -> Result<Vec<ShelfRow>> {
     let totals = app.db.book_totals()?;
     let last_read = app.db.last_read_by_book()?;
+    let read = app.db.progress_read_by_book()?;
     let mut rows = Vec::new();
     for book in app.db.books()? {
         let sources = app.db.sources_for_book(book.id)?;
         let source = sources.iter().find(|s| s.reader != Reader::Manual).cloned();
-        let progress = sources
-            .iter()
-            .filter_map(|s| s.last_position.as_ref().and_then(|p| p.progress))
-            .reduce(f64::max);
+        let position = source.as_ref().and_then(|s| s.last_position.clone());
         let goal_label = book
             .goal
             .as_deref()
@@ -58,10 +64,11 @@ pub fn rows(app: &App) -> Result<Vec<ShelfRow>> {
         rows.push(ShelfRow {
             time: totals.get(&book.id).copied().unwrap_or_default(),
             last_read: last_read.get(&book.id).copied(),
+            read: read.get(&book.id).copied().unwrap_or_default(),
             book,
             goal_label,
             source,
-            progress,
+            position,
         });
     }
     let order = |row: &ShelfRow| {
@@ -91,12 +98,10 @@ pub fn list(app: &App) -> Result<String> {
     for row in &active {
         let _ = writeln!(
             out,
-            "{:<22} {:<34} {:>5}  {:<9} {:<10} {:>6}{}",
+            "{:<22} {:<34} {:>10}  {:<9} {:<10} {:>6}{}",
             truncate(&row.goal_label, 22),
             truncate(&row.book.title, 34),
-            row.progress
-                .map(format_progress)
-                .unwrap_or_else(|| "-".into()),
+            row.position_label(),
             row.source.as_ref().map(|s| s.reader.label()).unwrap_or("-"),
             relative_day(app, row.last_read),
             format_minutes(row.time),
@@ -334,4 +339,66 @@ pub fn apply_goal(
         book.title,
         goal.unwrap_or("no goal")
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(at: f64, read: f64, minutes: i64) -> ShelfRow {
+        ShelfRow {
+            book: Book {
+                id: 1,
+                title: "Walden".into(),
+                author: None,
+                goal: None,
+                status: BookStatus::Active,
+                priority: 0,
+                added_at: Timestamp::UNIX_EPOCH,
+                finished_at: None,
+            },
+            goal_label: "Learning".into(),
+            source: None,
+            position: Some(Position::new(Some(at), Some("p.150/300".into()))),
+            read,
+            time: SignedDuration::from_mins(minutes),
+            last_read: None,
+        }
+    }
+
+    #[test]
+    fn time_left_uses_pages_actually_read_not_the_saved_place() {
+        // given
+        let shelf_row = row(0.5, 0.1, 60);
+
+        // when
+        let left = shelf_row.time_left();
+
+        // then
+        assert_eq!(left, Some(SignedDuration::from_mins(300)));
+    }
+
+    #[test]
+    fn a_jump_without_tracked_reading_gives_no_estimate() {
+        // given
+        let shelf_row = row(0.63, 0.0, 30);
+
+        // when
+        let left = shelf_row.time_left();
+
+        // then
+        assert_eq!(left, None);
+    }
+
+    #[test]
+    fn position_is_shown_as_a_place_not_a_percentage_read() {
+        // given
+        let shelf_row = row(0.5, 0.0, 0);
+
+        // when
+        let label = shelf_row.position_label();
+
+        // then
+        assert_eq!(label, "p.150/300");
+    }
 }

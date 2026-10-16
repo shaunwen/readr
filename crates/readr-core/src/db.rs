@@ -615,6 +615,18 @@ impl Db {
         Ok(totals)
     }
 
+    pub fn progress_read_by_book(&self) -> Result<HashMap<i64, f64>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT so.book_id, sum(min(se.end_progress - se.start_progress,
+                                        se.active_secs / 60.0 * {MAX_PROGRESS_PER_MINUTE}))
+             FROM sessions se JOIN book_sources so ON so.id = se.source_id
+             WHERE so.book_id IS NOT NULL AND se.end_progress > se.start_progress
+             GROUP BY so.book_id"
+        ))?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get::<_, f64>(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     pub fn last_read_by_book(&self) -> Result<HashMap<i64, Timestamp>> {
         let mut stmt = self.conn.prepare(
             "SELECT so.book_id, max(se.ended_at)
@@ -666,6 +678,9 @@ impl Db {
         Ok(inserted > 0)
     }
 }
+
+// A forward move faster than 1% of the book per minute of reading is a jump, not reading.
+const MAX_PROGRESS_PER_MINUTE: f64 = 0.01;
 
 const SOURCE_SELECT: &str = "SELECT id, book_id, reader, locator, title, author, ignored,
     last_progress, last_position, last_seen_at, collections FROM book_sources";
@@ -1027,6 +1042,35 @@ mod tests {
             last.get(&book_id),
             Some(&(now() + SignedDuration::from_mins(10)))
         );
+    }
+
+    #[test]
+    fn progress_read_counts_forward_reading_and_caps_jumps() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.add_book(&book("learning"), now()).unwrap();
+        let source = db
+            .upsert_source(Reader::Preview, "/books/a.pdf", None, None)
+            .unwrap();
+        db.link_source(source.id, Some(book_id)).unwrap();
+        let mut reading = session(source.id, 10);
+        reading.start_position = Some(Position::new(Some(0.10), None));
+        reading.end_position = Some(Position::new(Some(0.13), None));
+        let mut jump = session(source.id, 2);
+        jump.start_position = Some(Position::new(Some(0.13), None));
+        jump.end_position = Some(Position::new(Some(0.63), None));
+        let mut backwards = session(source.id, 5);
+        backwards.start_position = Some(Position::new(Some(0.63), None));
+        backwards.end_position = Some(Position::new(Some(0.20), None));
+        for s in [&reading, &jump, &backwards] {
+            db.save_session(s, false).unwrap();
+        }
+
+        // when
+        let read = db.progress_read_by_book().unwrap()[&book_id];
+
+        // then
+        assert!((read - (0.03 + 0.02)).abs() < 1e-9, "{read}");
     }
 
     #[test]

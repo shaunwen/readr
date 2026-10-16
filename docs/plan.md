@@ -152,7 +152,7 @@ readr config [set <key> <value>]
 
 TUI screens:
 - **Today**: 0-20 min gauge, streak, today's sessions, "up next".
-- **Shelf**: active books (WIP limit 3-4) grouped by goal with progress, last read, estimated time left; queue below. Finishing a book promotes the next.
+- **Shelf**: active books (WIP limit 3-4) grouped by goal with where you are (the saved place of the most recently used copy), last read, estimated time left; queue below. Finishing a book promotes the next.
 - **Stats**: 12-week calendar heatmap, minutes per goal per week vs target, best streak, pace.
 - **Inbox**: off-shelf sessions and unlinked files; add to shelf (past sessions then count), link, or ignore.
 
@@ -219,6 +219,8 @@ Crates: `ratatui`, `crossterm`, `tui-input` (text fields), `rusqlite` (bundled),
 - Window focus (built after the first version): the daemon reads the front app's focused window title through the Accessibility API (`AXFocusedWindow` / `AXTitle`, small FFI in `readers/ax.rs`). bookokrat sets its terminal title to `bookokrat`, a dash (U+2014) and the file stem (verified in its source and on 0.3.12), Rio shows it as the window title, and the stem is matched to a known bookmark, preferring the most recently read when a PDF and an EPUB share a stem. `--test-mode` does not set the title.
 - Away detection replaces the 2-minute idle cutoff for every reader. With a reader in front, focused checks continue without input up to `away_minutes`. Past that, an `Away` event trims the open session to `last input + max_page_minutes`: a long page counts in full when you keep reading, and leaving a book open over lunch counts no more than an ordinary page.
 - macOS keys Accessibility and Full Disk Access to the code signature. Ad-hoc builds change it every time, so `make install CODESIGN_IDENTITY=<certificate>` signs with a stable identity.
+
+- A saved place is not reading done: you can jump ahead, and anything before readr was untracked. The shelf shows the place as "at p.193/307", never as a percentage read, and time left uses only forward progress inside tracked sessions, capped at 1% of the book per minute so jumps don't count.
 
 ## Not built yet
 - "Read elsewhere" sessions from iCloud-synced Apple Books progress.

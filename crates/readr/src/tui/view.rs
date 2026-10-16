@@ -10,7 +10,7 @@ use ratatui::widgets::{
     Table, TableState, Tabs,
 };
 use readr_core::db::SessionView;
-use readr_core::model::{BookStatus, Position, format_progress};
+use readr_core::model::{BookStatus, Position};
 use readr_core::stats::{format_minutes, minutes};
 
 use super::data::{Data, HEATMAP_WEEKS};
@@ -227,11 +227,7 @@ fn draw_shelf(frame: &mut Frame, area: Rect, model: &Model) {
                 Cell::from(row.goal_label.clone()).style(goal_style),
                 Cell::from(row.book.title.clone()),
                 Cell::from(row.book.status.as_str()),
-                Cell::from(
-                    row.progress
-                        .map(format_progress)
-                        .unwrap_or_else(|| "-".into()),
-                ),
+                Cell::from(row.position_label()),
                 Cell::from(row.source.as_ref().map(|s| s.reader.label()).unwrap_or("-")),
                 Cell::from(last),
                 Cell::from(format_minutes(row.time)),
@@ -256,7 +252,7 @@ fn draw_shelf(frame: &mut Frame, area: Rect, model: &Model) {
             Constraint::Length(20),
             Constraint::Min(24),
             Constraint::Length(7),
-            Constraint::Length(6),
+            Constraint::Length(10),
             Constraint::Length(9),
             Constraint::Length(10),
             Constraint::Length(7),
