@@ -121,12 +121,17 @@ impl Tracker {
 }
 
 fn upsert(db: &Db, book: &BookRef) -> Result<crate::db::Source> {
-    db.upsert_source(
+    let mut source = db.upsert_source(
         book.reader,
         &book.locator,
         book.title.as_deref(),
         book.author.as_deref(),
-    )
+    )?;
+    if source.collections != book.collections {
+        db.set_source_collections(source.id, &book.collections)?;
+        source.collections = book.collections.clone();
+    }
+    Ok(source)
 }
 
 #[cfg(test)]
@@ -186,6 +191,7 @@ mod tests {
             locator: "/Books/walden.pdf".into(),
             title: Some("Walden".into()),
             author: None,
+            collections: Vec::new(),
         }
     }
 

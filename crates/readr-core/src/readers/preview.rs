@@ -9,7 +9,7 @@ use jiff::{SignedDuration, Timestamp};
 use plist::Value;
 
 use super::desktop::PREVIEW_BUNDLE;
-use super::{BookRef, PollContext, ReaderAdapter, ReaderEvent, file_stem};
+use super::{BookRef, PollContext, ReaderAdapter, ReaderEvent, file_title};
 use crate::model::{Position, Reader};
 use crate::session::ActivityKind;
 
@@ -34,6 +34,7 @@ pub struct Preview {
     pages: HashMap<PathBuf, Option<u32>>,
     inodes: HashMap<u64, PathBuf>,
     indexed_at: Option<Timestamp>,
+    titles: HashMap<PathBuf, Option<String>>,
 }
 
 impl Preview {
@@ -46,15 +47,23 @@ impl Preview {
             pages: HashMap::new(),
             inodes: HashMap::new(),
             indexed_at: None,
+            titles: HashMap::new(),
         }
     }
 
-    fn book(path: &Path) -> BookRef {
+    fn book(&mut self, path: &Path, ctx: &PollContext<'_>) -> BookRef {
         let locator = path.to_string_lossy().into_owned();
+        let title = self
+            .titles
+            .entry(path.to_path_buf())
+            .or_insert_with(|| ctx.desktop.document_title(path))
+            .clone()
+            .or_else(|| file_title(&locator));
         BookRef {
             reader: Reader::Preview,
-            title: file_stem(&locator),
+            title,
             author: None,
+            collections: Vec::new(),
             locator,
         }
     }
@@ -115,7 +124,7 @@ impl Preview {
             self.page_index.insert(path.clone(), page_index);
             if let Some(position) = self.position(&path, ctx) {
                 events.push(ReaderEvent::Position {
-                    book: Self::book(&path),
+                    book: self.book(&path, ctx),
                     at: entry.stamp,
                     position,
                 });
@@ -144,7 +153,7 @@ impl ReaderAdapter for Preview {
         {
             let position = self.position(&path, ctx);
             events.push(ReaderEvent::Activity {
-                book: Self::book(&path),
+                book: self.book(&path, ctx),
                 at: ctx.now,
                 kind: ActivityKind::Focused,
                 position,
@@ -340,7 +349,7 @@ mod tests {
         // then
         assert_eq!(
             positions(&events),
-            vec![("war-and-peace".to_string(), "p.42/500".to_string())]
+            vec![("War And Peace".to_string(), "p.42/500".to_string())]
         );
         let ReaderEvent::Position { position, .. } = &events[0] else {
             unreachable!()
@@ -379,7 +388,7 @@ mod tests {
         // then
         assert_eq!(
             positions(&events),
-            vec![("the-origin-of-species".to_string(), "p.21/320".to_string())]
+            vec![("The Origin Of Species".to_string(), "p.21/320".to_string())]
         );
     }
 
@@ -403,6 +412,30 @@ mod tests {
         assert_eq!(
             position.as_ref().unwrap().label.as_deref(),
             Some("p.42/500")
+        );
+    }
+
+    #[test]
+    fn spotlight_title_is_preferred_over_the_file_name() {
+        // given
+        let fixture = Fixture::new();
+        let book = fixture.book("the-origin-of-species.pdf", 320);
+        fixture
+            .desktop
+            .titles
+            .borrow_mut()
+            .insert(book.clone(), "The Origin of Species".into());
+        fixture.write_view_state(&[(&book, "2026-10-15T19:30:00Z", 9)]);
+        fixture.desktop.front.replace(None);
+        let mut adapter = fixture.adapter();
+
+        // when
+        let events = fixture.poll(&mut adapter, "2026-10-16T09:00:00Z");
+
+        // then
+        assert_eq!(
+            positions(&events),
+            vec![("The Origin of Species".to_string(), "p.10/320".to_string())]
         );
     }
 
@@ -479,7 +512,7 @@ mod tests {
         // then
         assert_eq!(
             positions(&events),
-            vec![("the-origin-of-species".to_string(), "p.10/320".to_string())]
+            vec![("The Origin Of Species".to_string(), "p.10/320".to_string())]
         );
     }
 }

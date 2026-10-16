@@ -208,9 +208,12 @@ pub fn add(app: &App, options: AddOptions<'_>) -> Result<String> {
         }
         None => match matches
             .iter()
-            .find_map(|s| app.config.suggest_goal(&s.locator, &[]))
+            .find_map(|s| app.config.suggest_goal(&s.locator, &s.collections))
         {
-            Some(goal) => (Some(goal.key.clone()), " (from its folder)".to_string()),
+            Some(goal) => (
+                Some(goal.key.clone()),
+                " (from its folder or collection)".to_string(),
+            ),
             None => (None, " (pass --goal to set one)".to_string()),
         },
     };

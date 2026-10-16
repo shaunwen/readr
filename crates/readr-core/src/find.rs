@@ -93,6 +93,7 @@ mod tests {
             ignored: false,
             last_position: None,
             last_seen_at: None,
+            collections: Vec::new(),
         }
     }
 

@@ -12,6 +12,7 @@ pub trait Desktop {
     fn process_running(&self, name: &str) -> bool;
     fn preview_front_document(&self) -> Option<PathBuf>;
     fn page_count(&self, path: &Path) -> Option<u32>;
+    fn document_title(&self, path: &Path) -> Option<String>;
 }
 
 pub struct MacDesktop;
@@ -48,13 +49,30 @@ impl Desktop for MacDesktop {
     }
 
     fn page_count(&self, path: &Path) -> Option<u32> {
-        let output = Command::new("mdls")
-            .args(["-raw", "-name", "kMDItemNumberOfPages"])
-            .arg(path)
-            .output()
-            .ok()?;
-        String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+        mdls(path, "kMDItemNumberOfPages")?.parse().ok()
     }
+
+    fn document_title(&self, path: &Path) -> Option<String> {
+        mdls(path, "kMDItemTitle").filter(|title| useful_title(title))
+    }
+}
+
+fn mdls(path: &Path, attribute: &str) -> Option<String> {
+    let output = Command::new("mdls")
+        .args(["-raw", "-name", attribute])
+        .arg(path)
+        .output()
+        .ok()?;
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (output.status.success() && !value.is_empty() && value != "(null)").then_some(value)
+}
+
+fn useful_title(title: &str) -> bool {
+    let lower = title.to_lowercase();
+    !lower.is_empty()
+        && lower != "untitled"
+        && !lower.starts_with("microsoft word")
+        && !lower.ends_with(".pdf")
 }
 
 fn run(program: &str, args: &[&str]) -> Option<String> {
@@ -92,6 +110,23 @@ mod tests {
 
         // then
         assert_eq!(bundle.as_deref(), Some("com.apple.Preview"));
+    }
+
+    #[test]
+    fn placeholder_titles_are_not_useful() {
+        // given
+        let titles = [
+            "Untitled",
+            "Microsoft Word - draft.docx",
+            "scan.pdf",
+            "The Origin of Species",
+        ];
+
+        // when
+        let useful: Vec<bool> = titles.iter().map(|t| useful_title(t)).collect();
+
+        // then
+        assert_eq!(useful, [false, false, false, true]);
     }
 
     #[test]

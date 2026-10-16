@@ -10,7 +10,8 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use crate::model::{BookStatus, Position, Reader};
 use crate::session::{ActivityKind, OpenSession};
 
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE books (
     id          INTEGER PRIMARY KEY,
     title       TEXT NOT NULL,
@@ -62,7 +63,11 @@ CREATE TABLE notifications (
     sent_at TEXT NOT NULL,
     PRIMARY KEY (day, kind)
 );
-"#];
+"#,
+    r#"
+ALTER TABLE book_sources ADD COLUMN collections TEXT;
+"#,
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Book {
@@ -95,6 +100,7 @@ pub struct Source {
     pub ignored: bool,
     pub last_position: Option<Position>,
     pub last_seen_at: Option<Timestamp>,
+    pub collections: Vec<String>,
 }
 
 impl Source {
@@ -332,6 +338,15 @@ impl Db {
                  last_seen_at = max(coalesce(last_seen_at, ''), ?4)
              WHERE id = ?1",
             params![id, position.progress, position.label, seen_at.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_source_collections(&self, id: i64, collections: &[String]) -> Result<()> {
+        let joined = (!collections.is_empty()).then(|| collections.join("\n"));
+        self.conn.execute(
+            "UPDATE book_sources SET collections = ?2 WHERE id = ?1",
+            params![id, joined],
         )?;
         Ok(())
     }
@@ -642,7 +657,7 @@ impl Db {
 }
 
 const SOURCE_SELECT: &str = "SELECT id, book_id, reader, locator, title, author, ignored,
-    last_progress, last_position, last_seen_at FROM book_sources";
+    last_progress, last_position, last_seen_at, collections FROM book_sources";
 
 fn source_from_row(row: &Row<'_>) -> rusqlite::Result<Result<Source>> {
     Ok((|| -> Result<Source> {
@@ -659,6 +674,10 @@ fn source_from_row(row: &Row<'_>) -> rusqlite::Result<Result<Source>> {
                 .get::<_, Option<String>>(9)?
                 .map(|t| t.parse())
                 .transpose()?,
+            collections: row
+                .get::<_, Option<String>>(10)?
+                .map(|text| text.lines().map(str::to_string).collect())
+                .unwrap_or_default(),
         })
     })())
 }
@@ -750,6 +769,23 @@ mod tests {
         // then
         assert_eq!(first.id, second.id);
         assert_eq!(second.title.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn source_collections_round_trip() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let source = db
+            .upsert_source(Reader::AppleBooks, "asset-1", Some("Meditations"), None)
+            .unwrap();
+
+        // when
+        db.set_source_collections(source.id, &["Library".into(), "Health".into()])
+            .unwrap();
+
+        // then
+        let source = db.source(source.id).unwrap().unwrap();
+        assert_eq!(source.collections, vec!["Library", "Health"]);
     }
 
     #[test]

@@ -24,6 +24,7 @@ struct Asset {
     author: Option<String>,
     progress: Option<f64>,
     last_open: Option<Timestamp>,
+    collections: Vec<String>,
 }
 
 impl Asset {
@@ -33,6 +34,7 @@ impl Asset {
             locator: self.id.clone(),
             title: self.title.clone(),
             author: self.author.clone(),
+            collections: self.collections.clone(),
         }
     }
 
@@ -146,6 +148,7 @@ fn read_assets(database: &Path) -> Result<Vec<Asset>> {
         "SELECT ZASSETID, ZTITLE, ZAUTHOR, ZREADINGPROGRESS, ZLASTOPENDATE
          FROM ZBKLIBRARYASSET WHERE ZASSETID IS NOT NULL",
     )?;
+    let mut collections = read_collections(&conn).unwrap_or_default();
     let rows = stmt.query_map([], |row| {
         Ok(Asset {
             id: row.get(0)?,
@@ -153,9 +156,32 @@ fn read_assets(database: &Path) -> Result<Vec<Asset>> {
             author: row.get(2)?,
             progress: row.get(3)?,
             last_open: row.get::<_, Option<f64>>(4)?.and_then(core_data_time),
+            collections: Vec::new(),
         })
     })?;
-    Ok(rows.collect::<rusqlite::Result<_>>()?)
+    let mut assets: Vec<Asset> = rows.collect::<rusqlite::Result<_>>()?;
+    for asset in &mut assets {
+        asset.collections = collections.remove(&asset.id).unwrap_or_default();
+    }
+    Ok(assets)
+}
+
+fn read_collections(conn: &Connection) -> rusqlite::Result<HashMap<String, Vec<String>>> {
+    let mut stmt = conn.prepare(
+        "SELECT m.ZASSETID, c.ZTITLE FROM ZBKCOLLECTIONMEMBER m
+         JOIN ZBKCOLLECTION c ON c.Z_PK = m.ZCOLLECTION
+         WHERE m.ZASSETID IS NOT NULL AND c.ZTITLE IS NOT NULL AND coalesce(c.ZDELETEDFLAG, 0) = 0
+         ORDER BY c.ZTITLE",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut collections: HashMap<String, Vec<String>> = HashMap::new();
+    for row in rows {
+        let (asset, title) = row?;
+        collections.entry(asset).or_default().push(title);
+    }
+    Ok(collections)
 }
 
 fn core_data_time(seconds: f64) -> Option<Timestamp> {
@@ -247,6 +273,31 @@ mod tests {
         assert_eq!(book.locator, "B2");
         assert_eq!(book.title.as_deref(), Some("Moby Dick"));
         assert_eq!(*kind, ActivityKind::Focused);
+    }
+
+    #[test]
+    fn collections_are_attached_to_their_books() {
+        // given
+        let fixture = Fixture::new();
+        fixture.upsert("A1", "Meditations", 0.30, "2026-10-15T10:30:00Z");
+        let conn = Connection::open(fixture.database()).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE ZBKCOLLECTION (Z_PK INTEGER PRIMARY KEY, ZTITLE VARCHAR, ZDELETEDFLAG INTEGER);
+             CREATE TABLE ZBKCOLLECTIONMEMBER (Z_PK INTEGER PRIMARY KEY, ZCOLLECTION INTEGER, ZASSETID VARCHAR);
+             INSERT INTO ZBKCOLLECTION VALUES (1, 'Health', 0), (2, 'Old', 1);
+             INSERT INTO ZBKCOLLECTIONMEMBER VALUES (1, 1, 'A1'), (2, 2, 'A1');",
+        )
+        .unwrap();
+        let mut adapter = fixture.adapter();
+
+        // when
+        let events = fixture.poll(&mut adapter, "2026-10-15T21:00:00Z");
+
+        // then
+        let Some(ReaderEvent::Activity { book, .. }) = events.last() else {
+            panic!("expected activity, got {events:?}");
+        };
+        assert_eq!(book.collections, vec!["Health"]);
     }
 
     #[test]

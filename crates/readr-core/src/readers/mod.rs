@@ -19,6 +19,7 @@ pub struct BookRef {
     pub locator: String,
     pub title: Option<String>,
     pub author: Option<String>,
+    pub collections: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,10 +65,23 @@ pub trait ReaderAdapter {
     fn poll(&mut self, ctx: &PollContext<'_>) -> Result<Vec<ReaderEvent>>;
 }
 
-fn file_stem(path: &str) -> Option<String> {
-    Path::new(path)
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
+fn file_title(path: &str) -> Option<String> {
+    let stem = Path::new(path).file_stem()?.to_string_lossy().into_owned();
+    if stem.contains(' ') {
+        return Some(stem);
+    }
+    let words: Vec<String> = stem
+        .split(['-', '_'])
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+                None => String::new(),
+            }
+        })
+        .collect();
+    (!words.is_empty()).then(|| words.join(" "))
 }
 
 #[cfg(test)]
@@ -87,6 +101,7 @@ pub(crate) mod fake {
         pub running: RefCell<Vec<String>>,
         pub preview_document: RefCell<Option<PathBuf>>,
         pub pages: RefCell<HashMap<PathBuf, u32>>,
+        pub titles: RefCell<HashMap<PathBuf, String>>,
     }
 
     impl FakeDesktop {
@@ -118,5 +133,38 @@ pub(crate) mod fake {
         fn page_count(&self, path: &Path) -> Option<u32> {
             self.pages.borrow().get(path).copied()
         }
+
+        fn document_title(&self, path: &Path) -> Option<String> {
+            self.titles.borrow().get(path).cloned()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hyphenated_file_names_become_titles() {
+        // given
+        let path = "/Books/classics/war-and-peace.pdf";
+
+        // when
+        let title = file_title(path);
+
+        // then
+        assert_eq!(title.as_deref(), Some("War And Peace"));
+    }
+
+    #[test]
+    fn file_names_with_spaces_are_kept() {
+        // given
+        let path = "/Books/Pride and Prejudice, Annotated.epub";
+
+        // when
+        let title = file_title(path);
+
+        // then
+        assert_eq!(title.as_deref(), Some("Pride and Prejudice, Annotated"));
     }
 }

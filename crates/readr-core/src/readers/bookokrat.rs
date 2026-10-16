@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use jiff::{SignedDuration, Timestamp};
 use serde::Deserialize;
 
-use super::{BookRef, PollContext, ReaderAdapter, ReaderEvent, file_stem};
+use super::{BookRef, PollContext, ReaderAdapter, ReaderEvent, file_title};
 use crate::model::{Position, Reader};
 use crate::session::ActivityKind;
 
@@ -104,8 +104,9 @@ impl Bookokrat {
             self.last_read.insert(locator.clone(), bookmark.last_read);
             let book = BookRef {
                 reader: Reader::Bookokrat,
-                title: bookmark.book_title.clone().or_else(|| file_stem(&name)),
+                title: bookmark.book_title.clone().or_else(|| file_title(&name)),
                 author: bookmark.book_author.clone(),
+                collections: Vec::new(),
                 locator,
             };
             let position = bookmark.position();
