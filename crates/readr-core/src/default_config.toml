@@ -1,0 +1,53 @@
+daily_goal_minutes = 20
+count_off_shelf = false
+library_dirs = ["~/Documents/Books"]
+
+[remind]
+interval = "2h"
+start = "09:00"
+
+[nightly]
+at = "21:00"
+# email_to = "you@example.com"
+# smtp_user = "you@gmail.com"
+# smtp_host = "smtp.gmail.com"
+# smtp_port = 587
+
+[tracking]
+poll_seconds = 15
+max_page_minutes = 5
+last_page_minutes = 1
+idle_seconds = 120
+min_session_seconds = 60
+use_window_focus = "auto"
+
+[launch]
+terminal = "rio"
+
+[[goal]]
+key = "health"
+label = "Health"
+color = "green"
+folders = ["health"]
+books_collections = ["Health"]
+
+[[goal]]
+key = "learning"
+label = "Learning"
+color = "yellow"
+folders = ["learning"]
+books_collections = ["Learning"]
+
+[[goal]]
+key = "communication"
+label = "Communication"
+color = "blue"
+folders = ["communication"]
+books_collections = ["Communication"]
+
+[[goal]]
+key = "competence"
+label = "Circle of competence"
+color = "magenta"
+folders = ["work"]
+books_collections = ["Competence"]
