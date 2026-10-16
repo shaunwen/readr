@@ -107,6 +107,14 @@ impl AppleBooks {
     }
 }
 
+pub fn check(dir: &Path) -> Result<usize> {
+    let adapter = AppleBooks::new(dir.to_path_buf());
+    let database = adapter
+        .database()
+        .with_context(|| format!("no BKLibrary-*.sqlite in {}", dir.display()))?;
+    Ok(read_assets(&database)?.len())
+}
+
 impl ReaderAdapter for AppleBooks {
     fn reader(&self) -> Reader {
         Reader::AppleBooks

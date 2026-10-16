@@ -51,6 +51,19 @@ pub fn set_password(account: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn has_password(account: &str) -> bool {
+    Command::new("security")
+        .args([
+            "find-generic-password",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            account,
+        ])
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
 fn password(account: &str) -> Result<String> {
     let output = Command::new("security")
         .args([

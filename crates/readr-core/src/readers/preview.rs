@@ -138,6 +138,10 @@ impl Preview {
     }
 }
 
+pub fn check(view_state: &Path) -> Result<usize> {
+    Ok(read_view_state(view_state)?.len())
+}
+
 impl ReaderAdapter for Preview {
     fn reader(&self) -> Reader {
         Reader::Preview

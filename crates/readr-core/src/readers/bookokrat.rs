@@ -131,6 +131,22 @@ impl Bookokrat {
     }
 }
 
+pub fn check(root: &Path) -> Result<usize> {
+    let adapter = Bookokrat::new(root.to_path_buf());
+    let files = adapter.bookmark_files();
+    if files.is_empty() {
+        anyhow::bail!("no bookmarks.json under {}", root.display());
+    }
+    let mut books = 0;
+    for path in files {
+        let text = std::fs::read_to_string(&path)?;
+        let file: BookmarksFile =
+            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        books += file.books.len();
+    }
+    Ok(books)
+}
+
 impl ReaderAdapter for Bookokrat {
     fn reader(&self) -> Reader {
         Reader::Bookokrat

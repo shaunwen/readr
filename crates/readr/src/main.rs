@@ -1,6 +1,7 @@
 mod commands;
 mod context;
 mod daemon;
+mod doctor;
 mod email;
 mod launch;
 mod launchd;
@@ -76,6 +77,10 @@ enum Command {
     },
     /// Show a sample reminder in herdr (or as a macOS notification)
     NotifyTest,
+    /// Write the default config and show the setup steps
+    Init,
+    /// Check config, readers, permissions, daemon and email
+    Doctor,
 }
 
 #[derive(Subcommand)]
@@ -190,6 +195,8 @@ fn run(cli: Cli) -> Result<()> {
         }
         Some(Command::Email { action }) => email_command(&app, action)?,
         Some(Command::NotifyTest) => notify_test(&app)?,
+        Some(Command::Init) => doctor::init(&app)?,
+        Some(Command::Doctor) => doctor::doctor(&app)?,
     };
     print!("{output}");
     Ok(())
