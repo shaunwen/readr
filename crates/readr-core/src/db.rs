@@ -1,0 +1,922 @@
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::time::Duration;
+
+use anyhow::{Context, Result, anyhow};
+use jiff::civil::Date;
+use jiff::{SignedDuration, Timestamp};
+use rusqlite::{Connection, OptionalExtension, Row, params};
+
+use crate::model::{BookStatus, Position, Reader};
+use crate::session::{ActivityKind, OpenSession};
+
+const MIGRATIONS: &[&str] = &[r#"
+CREATE TABLE books (
+    id          INTEGER PRIMARY KEY,
+    title       TEXT NOT NULL,
+    author      TEXT,
+    goal        TEXT,
+    status      TEXT NOT NULL CHECK (status IN ('active', 'queued', 'done', 'dropped')),
+    priority    INTEGER NOT NULL DEFAULT 0,
+    added_at    TEXT NOT NULL,
+    finished_at TEXT
+);
+
+CREATE TABLE book_sources (
+    id            INTEGER PRIMARY KEY,
+    book_id       INTEGER REFERENCES books(id) ON DELETE SET NULL,
+    reader        TEXT NOT NULL,
+    locator       TEXT NOT NULL,
+    title         TEXT,
+    author        TEXT,
+    ignored       INTEGER NOT NULL DEFAULT 0,
+    last_progress REAL,
+    last_position TEXT,
+    last_seen_at  TEXT,
+    UNIQUE (reader, locator)
+);
+
+CREATE TABLE sessions (
+    id             INTEGER PRIMARY KEY,
+    source_id      INTEGER NOT NULL REFERENCES book_sources(id) ON DELETE CASCADE,
+    goal           TEXT,
+    day            TEXT NOT NULL,
+    started_at     TEXT NOT NULL,
+    ended_at       TEXT NOT NULL,
+    last_kind      TEXT NOT NULL,
+    active_secs    INTEGER NOT NULL,
+    open           INTEGER NOT NULL DEFAULT 0,
+    start_progress REAL,
+    start_position TEXT,
+    end_progress   REAL,
+    end_position   TEXT,
+    note           TEXT,
+    edited         INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX sessions_day ON sessions(day);
+CREATE INDEX sessions_source ON sessions(source_id);
+
+CREATE TABLE notifications (
+    day     TEXT NOT NULL,
+    kind    TEXT NOT NULL,
+    sent_at TEXT NOT NULL,
+    PRIMARY KEY (day, kind)
+);
+"#];
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Book {
+    pub id: i64,
+    pub title: String,
+    pub author: Option<String>,
+    pub goal: Option<String>,
+    pub status: BookStatus,
+    pub priority: i64,
+    pub added_at: Timestamp,
+    pub finished_at: Option<Timestamp>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewBook {
+    pub title: String,
+    pub author: Option<String>,
+    pub goal: Option<String>,
+    pub status: BookStatus,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Source {
+    pub id: i64,
+    pub book_id: Option<i64>,
+    pub reader: Reader,
+    pub locator: String,
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub ignored: bool,
+    pub last_position: Option<Position>,
+    pub last_seen_at: Option<Timestamp>,
+}
+
+impl Source {
+    pub fn display_title(&self) -> String {
+        self.title.clone().unwrap_or_else(|| {
+            Path::new(&self.locator)
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| self.locator.clone())
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionView {
+    pub id: i64,
+    pub source_id: i64,
+    pub book_id: Option<i64>,
+    pub title: String,
+    pub reader: Reader,
+    pub goal: Option<String>,
+    pub day: Date,
+    pub started_at: Timestamp,
+    pub ended_at: Timestamp,
+    pub active: SignedDuration,
+    pub start_position: Option<Position>,
+    pub end_position: Option<Position>,
+    pub open: bool,
+    pub edited: bool,
+    pub note: Option<String>,
+}
+
+pub struct Db {
+    conn: Connection,
+}
+
+impl Db {
+    pub fn open(path: &Path) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        let conn = Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        Self::init(conn)
+    }
+
+    pub fn open_in_memory() -> Result<Self> {
+        Self::init(Connection::open_in_memory()?)
+    }
+
+    fn init(conn: Connection) -> Result<Self> {
+        conn.busy_timeout(Duration::from_secs(5))?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        let db = Self { conn };
+        db.migrate()?;
+        Ok(db)
+    }
+
+    fn migrate(&self) -> Result<()> {
+        let version: i64 = self
+            .conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))?;
+        for (index, migration) in (0_i64..).zip(MIGRATIONS).skip_while(|(i, _)| *i < version) {
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute_batch(migration)?;
+            tx.pragma_update(None, "user_version", index + 1)?;
+            tx.commit()?;
+        }
+        Ok(())
+    }
+
+    pub fn add_book(&self, book: &NewBook, now: Timestamp) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO books (title, author, goal, status, added_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                book.title,
+                book.author,
+                book.goal,
+                book.status.as_str(),
+                now.to_string()
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn books(&self) -> Result<Vec<Book>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, author, goal, status, priority, added_at, finished_at
+             FROM books ORDER BY priority, id",
+        )?;
+        let rows = stmt.query_map([], book_from_row)?;
+        rows.map(|row| row?).collect()
+    }
+
+    pub fn book(&self, id: i64) -> Result<Option<Book>> {
+        self.conn
+            .query_row(
+                "SELECT id, title, author, goal, status, priority, added_at, finished_at
+                 FROM books WHERE id = ?1",
+                [id],
+                book_from_row,
+            )
+            .optional()?
+            .transpose()
+    }
+
+    pub fn set_book_status(&self, id: i64, status: BookStatus, now: Timestamp) -> Result<()> {
+        let finished_at = (status == BookStatus::Done).then(|| now.to_string());
+        self.conn.execute(
+            "UPDATE books SET status = ?2, finished_at = ?3 WHERE id = ?1",
+            params![id, status.as_str(), finished_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_book_priority(&self, id: i64, priority: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE books SET priority = ?2 WHERE id = ?1",
+            params![id, priority],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_book_goal(&self, id: i64, goal: Option<&str>, move_history: bool) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE books SET goal = ?2 WHERE id = ?1",
+            params![id, goal],
+        )?;
+        if move_history {
+            tx.execute(
+                "UPDATE sessions SET goal = ?2
+                 WHERE source_id IN (SELECT id FROM book_sources WHERE book_id = ?1)",
+                params![id, goal],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn rename_goal(&self, old: &str, new: &str) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let books = tx.execute("UPDATE books SET goal = ?2 WHERE goal = ?1", [old, new])?;
+        tx.execute("UPDATE sessions SET goal = ?2 WHERE goal = ?1", [old, new])?;
+        tx.commit()?;
+        Ok(books)
+    }
+
+    pub fn goals_in_use(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT goal FROM books WHERE goal IS NOT NULL
+             UNION SELECT goal FROM sessions WHERE goal IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn upsert_source(
+        &self,
+        reader: Reader,
+        locator: &str,
+        title: Option<&str>,
+        author: Option<&str>,
+    ) -> Result<Source> {
+        self.conn.execute(
+            "INSERT INTO book_sources (reader, locator, title, author) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (reader, locator) DO UPDATE SET
+                 title = coalesce(excluded.title, title),
+                 author = coalesce(excluded.author, author)",
+            params![reader.as_str(), locator, title, author],
+        )?;
+        self.source_by_locator(reader, locator)?
+            .ok_or_else(|| anyhow!("source {reader}:{locator} vanished after insert"))
+    }
+
+    pub fn source(&self, id: i64) -> Result<Option<Source>> {
+        self.conn
+            .query_row(
+                &format!("{SOURCE_SELECT} WHERE id = ?1"),
+                [id],
+                source_from_row,
+            )
+            .optional()?
+            .transpose()
+    }
+
+    pub fn source_by_locator(&self, reader: Reader, locator: &str) -> Result<Option<Source>> {
+        self.conn
+            .query_row(
+                &format!("{SOURCE_SELECT} WHERE reader = ?1 AND locator = ?2"),
+                params![reader.as_str(), locator],
+                source_from_row,
+            )
+            .optional()?
+            .transpose()
+    }
+
+    pub fn sources_for_book(&self, book_id: i64) -> Result<Vec<Source>> {
+        self.query_sources(
+            &format!("{SOURCE_SELECT} WHERE book_id = ?1 ORDER BY last_seen_at DESC"),
+            [book_id],
+        )
+    }
+
+    pub fn inbox_sources(&self) -> Result<Vec<Source>> {
+        self.query_sources(
+            &format!(
+                "{SOURCE_SELECT} WHERE book_id IS NULL AND ignored = 0
+                 AND id IN (SELECT source_id FROM sessions)
+                 ORDER BY last_seen_at DESC"
+            ),
+            [],
+        )
+    }
+
+    pub fn all_sources(&self) -> Result<Vec<Source>> {
+        self.query_sources(&format!("{SOURCE_SELECT} ORDER BY last_seen_at DESC"), [])
+    }
+
+    fn query_sources(&self, sql: &str, params: impl rusqlite::Params) -> Result<Vec<Source>> {
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt.query_map(params, source_from_row)?;
+        rows.map(|row| row?).collect()
+    }
+
+    pub fn set_source_position(
+        &self,
+        id: i64,
+        position: &Position,
+        seen_at: Timestamp,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE book_sources SET last_progress = ?2, last_position = ?3, last_seen_at = ?4
+             WHERE id = ?1",
+            params![id, position.progress, position.label, seen_at.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn touch_source(&self, id: i64, seen_at: Timestamp) -> Result<()> {
+        self.conn.execute(
+            "UPDATE book_sources SET last_seen_at = ?2 WHERE id = ?1",
+            params![id, seen_at.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn link_source(&self, source_id: i64, book_id: Option<i64>) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE book_sources SET book_id = ?2, ignored = 0 WHERE id = ?1",
+            params![source_id, book_id],
+        )?;
+        if let Some(book_id) = book_id {
+            tx.execute(
+                "UPDATE sessions SET goal = (SELECT goal FROM books WHERE id = ?2)
+                 WHERE source_id = ?1 AND goal IS NULL",
+                params![source_id, book_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn ignore_source(&self, source_id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE book_sources SET ignored = 1 WHERE id = ?1",
+            [source_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_session(&self, session: &OpenSession, open: bool) -> Result<i64> {
+        let start = session.start_position.as_ref();
+        let end = session.end_position.as_ref();
+        let values = params![
+            session.source_id,
+            session.day.to_string(),
+            session.started_at.to_string(),
+            session.ended_at().to_string(),
+            session.last_kind.as_str(),
+            session.active.as_secs(),
+            open,
+            start.and_then(|p| p.progress),
+            start.and_then(|p| p.label.clone()),
+            end.and_then(|p| p.progress),
+            end.and_then(|p| p.label.clone()),
+        ];
+        match session.id {
+            Some(id) => {
+                let mut stmt = self.conn.prepare_cached(
+                    "UPDATE sessions SET source_id = ?1, day = ?2, started_at = ?3, ended_at = ?4,
+                         last_kind = ?5, active_secs = ?6, open = ?7, start_progress = ?8,
+                         start_position = ?9, end_progress = ?10, end_position = ?11
+                     WHERE id = ?12 AND edited = 0",
+                )?;
+                let mut values = values.to_vec();
+                values.push(&id);
+                stmt.execute(values.as_slice())?;
+                Ok(id)
+            }
+            None => {
+                let mut stmt = self.conn.prepare_cached(
+                    "INSERT INTO sessions (source_id, day, started_at, ended_at, last_kind,
+                         active_secs, open, start_progress, start_position, end_progress,
+                         end_position, goal)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                         (SELECT b.goal FROM book_sources s JOIN books b ON b.id = s.book_id
+                          WHERE s.id = ?1))",
+                )?;
+                stmt.execute(values)?;
+                Ok(self.conn.last_insert_rowid())
+            }
+        }
+    }
+
+    pub fn delete_session(&self, id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM sessions WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn open_sessions(&self) -> Result<Vec<OpenSession>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, source_id, day, started_at, ended_at, last_kind, active_secs,
+                    start_progress, start_position, end_progress, end_position
+             FROM sessions WHERE open = 1",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((|| -> Result<OpenSession> {
+                Ok(OpenSession {
+                    id: Some(row.get(0)?),
+                    source_id: row.get(1)?,
+                    day: row.get::<_, String>(2)?.parse()?,
+                    started_at: row.get::<_, String>(3)?.parse()?,
+                    last_activity_at: row.get::<_, String>(4)?.parse()?,
+                    last_kind: ActivityKind::parse(&row.get::<_, String>(5)?)
+                        .ok_or_else(|| anyhow!("unknown activity kind"))?,
+                    active: SignedDuration::from_secs(row.get(6)?),
+                    start_position: position_from(row.get(7)?, row.get(8)?),
+                    end_position: position_from(row.get(9)?, row.get(10)?),
+                })
+            })())
+        })?;
+        rows.map(|row| row?).collect()
+    }
+
+    pub fn add_manual_session(
+        &self,
+        book_id: i64,
+        started_at: Timestamp,
+        day: Date,
+        active: SignedDuration,
+        note: Option<&str>,
+    ) -> Result<i64> {
+        let source = self.upsert_source(Reader::Manual, &format!("book:{book_id}"), None, None)?;
+        self.link_source(source.id, Some(book_id))?;
+        let ended_at = started_at + active;
+        self.conn.execute(
+            "INSERT INTO sessions (source_id, goal, day, started_at, ended_at, last_kind,
+                 active_secs, note, edited)
+             VALUES (?1, (SELECT goal FROM books WHERE id = ?2), ?3, ?4, ?5, 'focused', ?6, ?7, 1)",
+            params![
+                source.id,
+                book_id,
+                day.to_string(),
+                started_at.to_string(),
+                ended_at.to_string(),
+                active.as_secs(),
+                note
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn edit_session(&self, id: i64, active: SignedDuration, source_id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET active_secs = ?2, source_id = ?3, edited = 1,
+                 goal = coalesce(
+                     (SELECT b.goal FROM book_sources s JOIN books b ON b.id = s.book_id
+                      WHERE s.id = ?3),
+                     goal)
+             WHERE id = ?1 AND open = 0",
+            params![id, active.as_secs(), source_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn sessions_between(&self, from: Date, to: Date) -> Result<Vec<SessionView>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT se.id, se.source_id, so.book_id, coalesce(b.title, so.title, so.locator),
+                    so.reader, se.goal, se.day, se.started_at, se.ended_at, se.active_secs,
+                    se.start_progress, se.start_position, se.end_progress, se.end_position,
+                    se.open, se.edited, se.note
+             FROM sessions se
+             JOIN book_sources so ON so.id = se.source_id
+             LEFT JOIN books b ON b.id = so.book_id
+             WHERE se.day BETWEEN ?1 AND ?2
+             ORDER BY se.started_at",
+        )?;
+        let rows = stmt.query_map([from.to_string(), to.to_string()], |row| {
+            Ok((|| -> Result<SessionView> {
+                Ok(SessionView {
+                    id: row.get(0)?,
+                    source_id: row.get(1)?,
+                    book_id: row.get(2)?,
+                    title: row.get(3)?,
+                    reader: row.get::<_, String>(4)?.parse()?,
+                    goal: row.get(5)?,
+                    day: row.get::<_, String>(6)?.parse()?,
+                    started_at: row.get::<_, String>(7)?.parse()?,
+                    ended_at: row.get::<_, String>(8)?.parse()?,
+                    active: SignedDuration::from_secs(row.get(9)?),
+                    start_position: position_from(row.get(10)?, row.get(11)?),
+                    end_position: position_from(row.get(12)?, row.get(13)?),
+                    open: row.get(14)?,
+                    edited: row.get(15)?,
+                    note: row.get(16)?,
+                })
+            })())
+        })?;
+        rows.map(|row| row?).collect()
+    }
+
+    pub fn daily_totals(
+        &self,
+        from: Date,
+        to: Date,
+        count_off_shelf: bool,
+    ) -> Result<BTreeMap<Date, SignedDuration>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT se.day, sum(se.active_secs)
+             FROM sessions se JOIN book_sources so ON so.id = se.source_id
+             WHERE se.day BETWEEN ?1 AND ?2 AND (?3 OR so.book_id IS NOT NULL)
+             GROUP BY se.day",
+        )?;
+        let rows = stmt.query_map(
+            params![from.to_string(), to.to_string(), count_off_shelf],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        let mut totals = BTreeMap::new();
+        for row in rows {
+            let (day, secs) = row?;
+            totals.insert(day.parse()?, SignedDuration::from_secs(secs));
+        }
+        Ok(totals)
+    }
+
+    pub fn day_total(&self, day: Date, count_off_shelf: bool) -> Result<SignedDuration> {
+        Ok(self
+            .daily_totals(day, day, count_off_shelf)?
+            .remove(&day)
+            .unwrap_or(SignedDuration::ZERO))
+    }
+
+    pub fn book_totals(&self) -> Result<BTreeMap<i64, SignedDuration>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT so.book_id, sum(se.active_secs)
+             FROM sessions se JOIN book_sources so ON so.id = se.source_id
+             WHERE so.book_id IS NOT NULL GROUP BY so.book_id",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)?)))?;
+        let mut totals = BTreeMap::new();
+        for row in rows {
+            let (book_id, secs) = row?;
+            totals.insert(book_id, SignedDuration::from_secs(secs));
+        }
+        Ok(totals)
+    }
+
+    pub fn notified(&self, day: Date, kind: &str) -> Result<bool> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT 1 FROM notifications WHERE day = ?1 AND kind = ?2",
+                [day.to_string(), kind.to_string()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    pub fn mark_notified(&self, day: Date, kind: &str, at: Timestamp) -> Result<bool> {
+        let inserted = self.conn.execute(
+            "INSERT OR IGNORE INTO notifications (day, kind, sent_at) VALUES (?1, ?2, ?3)",
+            [day.to_string(), kind.to_string(), at.to_string()],
+        )?;
+        Ok(inserted > 0)
+    }
+}
+
+const SOURCE_SELECT: &str = "SELECT id, book_id, reader, locator, title, author, ignored,
+    last_progress, last_position, last_seen_at FROM book_sources";
+
+fn source_from_row(row: &Row<'_>) -> rusqlite::Result<Result<Source>> {
+    Ok((|| -> Result<Source> {
+        Ok(Source {
+            id: row.get(0)?,
+            book_id: row.get(1)?,
+            reader: row.get::<_, String>(2)?.parse()?,
+            locator: row.get(3)?,
+            title: row.get(4)?,
+            author: row.get(5)?,
+            ignored: row.get(6)?,
+            last_position: position_from(row.get(7)?, row.get(8)?),
+            last_seen_at: row
+                .get::<_, Option<String>>(9)?
+                .map(|t| t.parse())
+                .transpose()?,
+        })
+    })())
+}
+
+fn book_from_row(row: &Row<'_>) -> rusqlite::Result<Result<Book>> {
+    Ok((|| -> Result<Book> {
+        Ok(Book {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            author: row.get(2)?,
+            goal: row.get(3)?,
+            status: row.get::<_, String>(4)?.parse()?,
+            priority: row.get(5)?,
+            added_at: row.get::<_, String>(6)?.parse()?,
+            finished_at: row
+                .get::<_, Option<String>>(7)?
+                .map(|t| t.parse())
+                .transpose()?,
+        })
+    })())
+}
+
+fn position_from(progress: Option<f64>, label: Option<String>) -> Option<Position> {
+    (progress.is_some() || label.is_some()).then(|| Position::new(progress, label))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn now() -> Timestamp {
+        "2026-10-16T09:00:00Z".parse().unwrap()
+    }
+
+    fn day() -> Date {
+        Date::constant(2026, 10, 16)
+    }
+
+    fn book(goal: &str) -> NewBook {
+        NewBook {
+            title: "Walden".into(),
+            author: Some("Henry David Thoreau".into()),
+            goal: Some(goal.into()),
+            status: BookStatus::Active,
+        }
+    }
+
+    fn session(source_id: i64, minutes: i64) -> OpenSession {
+        OpenSession {
+            id: None,
+            source_id,
+            day: day(),
+            started_at: now(),
+            last_activity_at: now() + SignedDuration::from_mins(minutes),
+            last_kind: ActivityKind::PageTurn,
+            active: SignedDuration::from_mins(minutes),
+            start_position: Some(Position::new(Some(0.1), Some("p.9".into()))),
+            end_position: Some(Position::new(Some(0.12), Some("p.12".into()))),
+        }
+    }
+
+    #[test]
+    fn migrations_are_idempotent_on_reopen() {
+        // given
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested/readr.db");
+        Db::open(&path).unwrap();
+
+        // when
+        let reopened = Db::open(&path);
+
+        // then
+        assert!(reopened.is_ok());
+    }
+
+    #[test]
+    fn upserting_a_source_twice_keeps_one_row_and_fills_metadata() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let first = db
+            .upsert_source(Reader::Preview, "/books/a.pdf", None, None)
+            .unwrap();
+
+        // when
+        let second = db
+            .upsert_source(Reader::Preview, "/books/a.pdf", Some("A"), None)
+            .unwrap();
+
+        // then
+        assert_eq!(first.id, second.id);
+        assert_eq!(second.title.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn session_snapshots_the_goal_of_its_book() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.add_book(&book("communication"), now()).unwrap();
+        let source = db
+            .upsert_source(Reader::Bookokrat, "/books/s.pdf", None, None)
+            .unwrap();
+        db.link_source(source.id, Some(book_id)).unwrap();
+
+        // when
+        db.save_session(&session(source.id, 7), false).unwrap();
+
+        // then
+        let sessions = db.sessions_between(day(), day()).unwrap();
+        assert_eq!(sessions[0].goal.as_deref(), Some("communication"));
+        assert_eq!(sessions[0].title, "Walden");
+        assert_eq!(sessions[0].active, SignedDuration::from_mins(7));
+        assert_eq!(
+            sessions[0].end_position.as_ref().unwrap().label.as_deref(),
+            Some("p.12")
+        );
+    }
+
+    #[test]
+    fn off_shelf_time_counts_only_when_enabled() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.add_book(&book("health"), now()).unwrap();
+        let shelf = db
+            .upsert_source(Reader::AppleBooks, "asset-1", None, None)
+            .unwrap();
+        db.link_source(shelf.id, Some(book_id)).unwrap();
+        let stray = db
+            .upsert_source(Reader::Preview, "/tmp/invoice.pdf", None, None)
+            .unwrap();
+        db.save_session(&session(shelf.id, 12), false).unwrap();
+        db.save_session(&session(stray.id, 5), false).unwrap();
+
+        // when
+        let shelf_only = db.day_total(day(), false).unwrap();
+        let everything = db.day_total(day(), true).unwrap();
+
+        // then
+        assert_eq!(shelf_only, SignedDuration::from_mins(12));
+        assert_eq!(everything, SignedDuration::from_mins(17));
+    }
+
+    #[test]
+    fn linking_an_inbox_source_makes_its_past_sessions_count() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let source = db
+            .upsert_source(Reader::Preview, "/books/new.pdf", None, None)
+            .unwrap();
+        db.save_session(&session(source.id, 9), false).unwrap();
+        assert_eq!(db.inbox_sources().unwrap().len(), 1);
+        let book_id = db.add_book(&book("learning"), now()).unwrap();
+
+        // when
+        db.link_source(source.id, Some(book_id)).unwrap();
+
+        // then
+        assert!(db.inbox_sources().unwrap().is_empty());
+        assert_eq!(
+            db.day_total(day(), false).unwrap(),
+            SignedDuration::from_mins(9)
+        );
+        let sessions = db.sessions_between(day(), day()).unwrap();
+        assert_eq!(sessions[0].goal.as_deref(), Some("learning"));
+    }
+
+    #[test]
+    fn open_sessions_round_trip_for_restart() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let source = db
+            .upsert_source(Reader::Bookokrat, "/books/s.pdf", None, None)
+            .unwrap();
+        let mut open = session(source.id, 3);
+        open.id = Some(db.save_session(&open, true).unwrap());
+
+        // when
+        let restored = db.open_sessions().unwrap();
+
+        // then
+        assert_eq!(restored, vec![open]);
+    }
+
+    #[test]
+    fn edited_sessions_are_not_overwritten_by_the_daemon() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let source = db
+            .upsert_source(Reader::Bookokrat, "/books/s.pdf", None, None)
+            .unwrap();
+        let mut finished = session(source.id, 10);
+        finished.id = Some(db.save_session(&finished, false).unwrap());
+        db.edit_session(
+            finished.id.unwrap(),
+            SignedDuration::from_mins(4),
+            source.id,
+        )
+        .unwrap();
+
+        // when
+        db.save_session(&session_with_id(&finished, 15), false)
+            .unwrap();
+
+        // then
+        let sessions = db.sessions_between(day(), day()).unwrap();
+        assert_eq!(sessions[0].active, SignedDuration::from_mins(4));
+        assert!(sessions[0].edited);
+    }
+
+    fn session_with_id(base: &OpenSession, minutes: i64) -> OpenSession {
+        OpenSession {
+            active: SignedDuration::from_mins(minutes),
+            ..base.clone()
+        }
+    }
+
+    #[test]
+    fn moving_a_book_to_another_goal_can_move_its_history() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.add_book(&book("health"), now()).unwrap();
+        let source = db
+            .upsert_source(Reader::AppleBooks, "asset-1", None, None)
+            .unwrap();
+        db.link_source(source.id, Some(book_id)).unwrap();
+        db.save_session(&session(source.id, 10), false).unwrap();
+
+        // when
+        db.set_book_goal(book_id, Some("learning"), false).unwrap();
+        let kept = db.sessions_between(day(), day()).unwrap()[0].goal.clone();
+        db.set_book_goal(book_id, Some("learning"), true).unwrap();
+        let moved = db.sessions_between(day(), day()).unwrap()[0].goal.clone();
+
+        // then
+        assert_eq!(kept.as_deref(), Some("health"));
+        assert_eq!(moved.as_deref(), Some("learning"));
+    }
+
+    #[test]
+    fn renaming_a_goal_updates_books_and_sessions() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.add_book(&book("competence"), now()).unwrap();
+        let source = db
+            .upsert_source(Reader::AppleBooks, "asset-1", None, None)
+            .unwrap();
+        db.link_source(source.id, Some(book_id)).unwrap();
+        db.save_session(&session(source.id, 10), false).unwrap();
+
+        // when
+        let renamed = db.rename_goal("competence", "craft").unwrap();
+
+        // then
+        assert_eq!(renamed, 1);
+        assert_eq!(db.goals_in_use().unwrap(), vec!["craft".to_string()]);
+    }
+
+    #[test]
+    fn manual_session_counts_toward_its_book() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.add_book(&book("health"), now()).unwrap();
+
+        // when
+        db.add_manual_session(
+            book_id,
+            now(),
+            day(),
+            SignedDuration::from_mins(25),
+            Some("paper"),
+        )
+        .unwrap();
+
+        // then
+        assert_eq!(
+            db.day_total(day(), false).unwrap(),
+            SignedDuration::from_mins(25)
+        );
+        assert_eq!(
+            db.book_totals().unwrap().get(&book_id),
+            Some(&SignedDuration::from_mins(25))
+        );
+    }
+
+    #[test]
+    fn notifications_are_recorded_once_per_day_and_kind() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+
+        // when
+        let first = db.mark_notified(day(), "nightly", now()).unwrap();
+        let second = db.mark_notified(day(), "nightly", now()).unwrap();
+
+        // then
+        assert!(first);
+        assert!(!second);
+        assert!(db.notified(day(), "nightly").unwrap());
+        assert!(!db.notified(day(), "remind@09:00").unwrap());
+    }
+
+    #[test]
+    fn finishing_a_book_records_when() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.add_book(&book("health"), now()).unwrap();
+
+        // when
+        db.set_book_status(book_id, BookStatus::Done, now())
+            .unwrap();
+
+        // then
+        let book = db.book(book_id).unwrap().unwrap();
+        assert_eq!(book.status, BookStatus::Done);
+        assert_eq!(book.finished_at, Some(now()));
+    }
+}
