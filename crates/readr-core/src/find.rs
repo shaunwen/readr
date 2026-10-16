@@ -47,6 +47,15 @@ pub fn find_sources<'a>(sources: &'a [Source], query: &str) -> Vec<&'a Source> {
         .collect()
 }
 
+pub fn main_title(title: &str) -> String {
+    let main = title.split([':', '(']).next().unwrap_or(title).trim();
+    if main.chars().count() >= 3 {
+        main.to_string()
+    } else {
+        title.trim().to_string()
+    }
+}
+
 pub fn same_title(a: &str, b: &str) -> bool {
     normalize(a) == normalize(b)
 }
@@ -157,6 +166,26 @@ mod tests {
 
         // then
         assert!(same);
+    }
+
+    #[test]
+    fn main_title_drops_subtitles() {
+        // given
+        let titles = [
+            "Moby Dick: Or, The Whale",
+            "Walden (Annotated Edition)",
+            "War and Peace",
+            "C: A Language",
+        ];
+
+        // when
+        let main: Vec<String> = titles.iter().map(|t| main_title(t)).collect();
+
+        // then
+        assert_eq!(
+            main,
+            ["Moby Dick", "Walden", "War and Peace", "C: A Language"]
+        );
     }
 
     #[test]

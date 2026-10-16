@@ -4,8 +4,9 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use jiff::{SignedDuration, Timestamp};
 use readr_core::db::{Book, NewBook, Source};
-use readr_core::find::{find_books, find_sources, same_title};
+use readr_core::find::{find_books, find_sources, main_title, same_title};
 use readr_core::model::{BookStatus, Reader, format_progress};
+use readr_core::readers::{Desktop, MacDesktop, file_title};
 use readr_core::stats::format_minutes;
 
 use crate::context::App;
@@ -159,9 +160,12 @@ pub fn add(app: &App, options: AddOptions<'_>) -> Result<String> {
         }
         let canonical = path.canonicalize()?;
         let locator = canonical.to_string_lossy();
+        let title = MacDesktop
+            .document_title(&canonical)
+            .or_else(|| file_title(&locator));
         matches.push(
             app.db
-                .upsert_source(Reader::Bookokrat, &locator, None, None)?,
+                .upsert_source(Reader::Bookokrat, &locator, title.as_deref(), None)?,
         );
     }
     let first_title = matches[0].display_title();
@@ -193,9 +197,10 @@ pub fn add(app: &App, options: AddOptions<'_>) -> Result<String> {
 
     let title = matches
         .iter()
-        .filter_map(|s| s.title.clone())
+        .filter_map(|s| s.title.as_deref())
+        .map(main_title)
         .max_by_key(|t| t.len().min(60))
-        .unwrap_or(first_title);
+        .unwrap_or_else(|| main_title(&first_title));
     let author = matches.iter().find_map(|s| s.author.clone());
     let (goal, goal_note) = match options.goal {
         Some("none") => (None, String::new()),

@@ -349,7 +349,7 @@ mod tests {
         // then
         assert_eq!(
             positions(&events),
-            vec![("War And Peace".to_string(), "p.42/500".to_string())]
+            vec![("War and Peace".to_string(), "p.42/500".to_string())]
         );
         let ReaderEvent::Position { position, .. } = &events[0] else {
             unreachable!()
@@ -388,7 +388,7 @@ mod tests {
         // then
         assert_eq!(
             positions(&events),
-            vec![("The Origin Of Species".to_string(), "p.21/320".to_string())]
+            vec![("The Origin of Species".to_string(), "p.21/320".to_string())]
         );
     }
 
@@ -543,7 +543,7 @@ mod tests {
         // then
         assert_eq!(
             positions(&events),
-            vec![("The Origin Of Species".to_string(), "p.10/320".to_string())]
+            vec![("The Origin of Species".to_string(), "p.10/320".to_string())]
         );
     }
 }

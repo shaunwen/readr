@@ -105,12 +105,10 @@ pub struct Source {
 
 impl Source {
     pub fn display_title(&self) -> String {
-        self.title.clone().unwrap_or_else(|| {
-            Path::new(&self.locator)
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().into_owned())
-                .unwrap_or_else(|| self.locator.clone())
-        })
+        self.title
+            .clone()
+            .or_else(|| crate::readers::file_title(&self.locator))
+            .unwrap_or_else(|| self.locator.clone())
     }
 }
 

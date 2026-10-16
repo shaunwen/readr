@@ -98,7 +98,11 @@ pub trait ReaderAdapter {
     fn poll(&mut self, ctx: &PollContext<'_>) -> Result<Vec<ReaderEvent>>;
 }
 
-fn file_title(path: &str) -> Option<String> {
+const MINOR_WORDS: &[&str] = &[
+    "a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "the", "to", "vs", "with",
+];
+
+pub fn file_title(path: &str) -> Option<String> {
     let stem = Path::new(path).file_stem()?.to_string_lossy().into_owned();
     if stem.contains(' ') {
         return Some(stem);
@@ -106,7 +110,11 @@ fn file_title(path: &str) -> Option<String> {
     let words: Vec<String> = stem
         .split(['-', '_'])
         .filter(|word| !word.is_empty())
-        .map(|word| {
+        .enumerate()
+        .map(|(index, word)| {
+            if index > 0 && MINOR_WORDS.contains(&word) {
+                return word.to_string();
+            }
             let mut chars = word.chars();
             match chars.next() {
                 Some(first) => first.to_uppercase().chain(chars).collect(),
@@ -199,7 +207,19 @@ mod tests {
         let title = file_title(path);
 
         // then
-        assert_eq!(title.as_deref(), Some("War And Peace"));
+        assert_eq!(title.as_deref(), Some("War and Peace"));
+    }
+
+    #[test]
+    fn minor_words_stay_lowercase_except_first() {
+        // given
+        let path = "/Books/a-philosophy-of-software-design.pdf";
+
+        // when
+        let title = file_title(path);
+
+        // then
+        assert_eq!(title.as_deref(), Some("A Philosophy of Software Design"));
     }
 
     #[test]
