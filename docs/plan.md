@@ -199,7 +199,7 @@ Crates: `ratatui`, `crossterm`, `tui-input` (text fields), `rusqlite` (bundled),
 - Does Preview write `ViewState` only when a document closes? (Timestamps suggest yes; fine for the end position, not for page-turn detection.)
 - Does the Apple Books type-3 location row update on every page turn?
 - Does `ibooks://assetid/<id>` open a book at its saved position?
-- Does bookokrat override Rio's window title? Is a file opened by path tied to the folder's library?
+- Is a file opened by path in bookokrat tied to the folder's library?
 - Can a launchd process reach the herdr socket for notifications?
 - Do "read elsewhere" iCloud sessions count toward the daily goal?
 - Printed vs physical page numbers in PDFs: show page labels from the PDF.
@@ -216,8 +216,11 @@ Crates: `ratatui`, `crossterm`, `tui-input` (text fields), `rusqlite` (bundled),
 - Apple Books collections are read from `ZBKCOLLECTIONMEMBER` / `ZBKCOLLECTION` and used for goal suggestions.
 - Preview titles come from Spotlight (`kMDItemTitle`), falling back to a cleaned-up file name.
 
+- Window focus (built after the first version): the daemon reads the front app's focused window title through the Accessibility API (`AXFocusedWindow` / `AXTitle`, small FFI in `readers/ax.rs`). bookokrat sets its terminal title to `bookokrat`, a dash (U+2014) and the file stem (verified in its source and on 0.3.12), Rio shows it as the window title, and the stem is matched to a known bookmark, preferring the most recently read when a PDF and an EPUB share a stem. `--test-mode` does not set the title.
+- Away detection replaces the 2-minute idle cutoff for every reader. With a reader in front, focused checks continue without input up to `away_minutes`. Past that, an `Away` event trims the open session to `last input + max_page_minutes`: a long page counts in full when you keep reading, and leaving a book open over lunch counts no more than an ordinary page.
+- macOS keys Accessibility and Full Disk Access to the code signature. Ad-hoc builds change it every time, so `make install CODESIGN_IDENTITY=<certificate>` signs with a stable identity.
+
 ## Not built yet
-- Focused-window layer for bookokrat (Accessibility). Page turns alone undercount pages read for longer than `max_page_minutes`.
 - "Read elsewhere" sessions from iCloud-synced Apple Books progress.
 - PDF page labels (printed page numbers) for display.
 - Daily note line in the notes vault, weekly summary email.

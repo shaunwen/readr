@@ -13,7 +13,14 @@ readr daemon install    # launchd agent com.shaunwen.readr, starts at login
 readr doctor            # checks config, readers, permissions, daemon, email
 ```
 
-Grant **Full Disk Access** to `~/workspace/bin/readr` (System Settings > Privacy & Security > Full Disk Access). The daemon needs it to read the Apple Books library. macOS also asks once to let readr control Preview, to read which document is open.
+Grant `~/workspace/bin/readr` two permissions in System Settings > Privacy & Security:
+
+- **Full Disk Access**, to read the Apple Books library.
+- **Accessibility**, to see which window is focused, so a page you read for longer than `max_page_minutes` still counts. The daemon asks for this on start.
+
+macOS also asks once to let readr control Preview, to read which document is open.
+
+macOS ties these grants to the binary's signature. An ad-hoc build changes it on every `make install`, so the grants would have to be given again. To keep them, create a code signing certificate once (Keychain Access > Certificate Assistant > Create a Certificate, Identity Type "Self Signed Root", Certificate Type "Code Signing", name `readr-dev`) and install with `make install CODESIGN_IDENTITY=readr-dev`. `make install` also restarts a running daemon.
 
 ## Daily use
 
@@ -58,7 +65,7 @@ readr notify-test
 - `library_dirs`
 - `[remind]` interval and start
 - `[nightly]` time and email
-- `[tracking]` gaps and idle limit
+- `[tracking]` page gaps, `away_minutes`, `window_focus`
 - `[launch] terminal = "rio" | "herdr"`
 - `[[goal]]` entries with `key`, `label`, `color`, `weekly_minutes`, `folders`, `books_collections`
 
@@ -68,9 +75,11 @@ Goals are suggested for new books from their folder under `library_dirs`, or fro
 
 | Reader | Which book | Time | Position |
 |---|---|---|---|
-| bookokrat | `bookmarks.json` in each library under `~/Library/Application Support/bookokrat/libraries` | time between page turns, each gap capped at `max_page_minutes`, plus `last_page_minutes` | page or chapter and `book_progress` |
-| Preview | front document (AppleScript), only inside `library_dirs` | front app and not idle | `com.apple.Preview.ViewState.plist`, keyed by inode, so renames keep the page |
-| Apple Books | most recently opened book in `BKLibrary-*.sqlite` (read-only) | front app and not idle | `ZREADINGPROGRESS` |
+| bookokrat | `bookmarks.json` in each library under `~/Library/Application Support/bookokrat/libraries`; the focused window title, which bookokrat sets to its name, a dash and the file name | while its window is focused; otherwise time between page turns, each gap capped at `max_page_minutes`, plus `last_page_minutes` | page or chapter and `book_progress` |
+| Preview | front document (AppleScript), only inside `library_dirs` | while it is the front app | `com.apple.Preview.ViewState.plist`, keyed by inode, so renames keep the page |
+| Apple Books | most recently opened book in `BKLibrary-*.sqlite` (read-only) | while it is the front app | `ZREADINGPROGRESS` |
+
+While a reader is in front, time counts even without keyboard or mouse input, so a long page counts in full. After `away_minutes` (default 15) without input, readr assumes you stepped away: the session is cut back to your last input plus `max_page_minutes`. Window focus works in any terminal whose window title follows the program's title (Rio does by default), but not inside herdr, whose window title is herdr's own. Turn it off with `tracking.window_focus = false`.
 
 Sessions shorter than `min_session_seconds` are dropped. Sessions crossing midnight are split. Open sessions are saved on every poll, so `status` and the TUI include the session in progress, and a daemon restart loses nothing. Sessions you edit are never overwritten.
 
