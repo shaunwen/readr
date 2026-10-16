@@ -1,5 +1,5 @@
 BIN_DIR ?= $(HOME)/workspace/bin
-CODESIGN_IDENTITY ?=
+CODESIGN_IDENTITY ?= $(shell security find-identity -p codesigning 2>/dev/null | grep -q '"readr-dev"' && echo readr-dev)
 LAUNCHD_SERVICE := gui/$(shell id -u)/com.shaunwen.readr
 
 .PHONY: build test lint install

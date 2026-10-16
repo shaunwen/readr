@@ -20,7 +20,7 @@ Grant `~/workspace/bin/readr` two permissions in System Settings > Privacy & Sec
 
 macOS also asks once to let readr control Preview, to read which document is open.
 
-macOS ties these grants to the binary's signature. An ad-hoc build changes it on every `make install`, so the grants would have to be given again. To keep them, create a code signing certificate once (Keychain Access > Certificate Assistant > Create a Certificate, Identity Type "Self Signed Root", Certificate Type "Code Signing", name `readr-dev`) and install with `make install CODESIGN_IDENTITY=readr-dev`. `make install` also restarts a running daemon.
+macOS ties these grants to the binary's signature. An ad-hoc build changes it on every `make install`, so the grants would have to be given again. To keep them, create a code signing certificate once (Keychain Access > Certificate Assistant > Create a Certificate, Identity Type "Self Signed Root", Certificate Type "Code Signing", name `readr-dev`) `make install` signs with it whenever it exists (or pass `CODESIGN_IDENTITY=<name>`). `make install` also restarts a running daemon.
 
 ## Daily use
 
