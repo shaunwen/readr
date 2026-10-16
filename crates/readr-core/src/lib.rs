@@ -4,3 +4,4 @@ pub mod model;
 pub mod paths;
 pub mod readers;
 pub mod session;
+pub mod tracker;

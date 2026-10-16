@@ -328,7 +328,8 @@ impl Db {
         seen_at: Timestamp,
     ) -> Result<()> {
         self.conn.execute(
-            "UPDATE book_sources SET last_progress = ?2, last_position = ?3, last_seen_at = ?4
+            "UPDATE book_sources SET last_progress = ?2, last_position = ?3,
+                 last_seen_at = max(coalesce(last_seen_at, ''), ?4)
              WHERE id = ?1",
             params![id, position.progress, position.label, seen_at.to_string()],
         )?;
@@ -337,10 +338,32 @@ impl Db {
 
     pub fn touch_source(&self, id: i64, seen_at: Timestamp) -> Result<()> {
         self.conn.execute(
-            "UPDATE book_sources SET last_seen_at = ?2 WHERE id = ?1",
+            "UPDATE book_sources SET last_seen_at = max(coalesce(last_seen_at, ''), ?2)
+             WHERE id = ?1",
             params![id, seen_at.to_string()],
         )?;
         Ok(())
+    }
+
+    pub fn update_recent_session_end(
+        &self,
+        source_id: i64,
+        position: &Position,
+        ended_since: Timestamp,
+    ) -> Result<bool> {
+        let updated = self.conn.execute(
+            "UPDATE sessions SET end_progress = ?2, end_position = ?3
+             WHERE id = (SELECT id FROM sessions
+                         WHERE source_id = ?1 AND open = 0 AND edited = 0 AND ended_at >= ?4
+                         ORDER BY ended_at DESC LIMIT 1)",
+            params![
+                source_id,
+                position.progress,
+                position.label,
+                ended_since.to_string()
+            ],
+        )?;
+        Ok(updated > 0)
     }
 
     pub fn link_source(&self, source_id: i64, book_id: Option<i64>) -> Result<()> {
