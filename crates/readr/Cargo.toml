@@ -10,6 +10,7 @@ anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 jiff = "0.2.38"
 lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "rustls", "rustls-platform-verifier", "ring"] }
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "layout-cache"] }
 readr-core = { path = "../readr-core" }
 
 [dev-dependencies]

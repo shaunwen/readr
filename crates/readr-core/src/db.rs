@@ -604,6 +604,19 @@ impl Db {
         Ok(totals)
     }
 
+    pub fn source_totals(&self) -> Result<HashMap<i64, SignedDuration>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT source_id, sum(active_secs) FROM sessions GROUP BY source_id")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)?)))?;
+        let mut totals = HashMap::new();
+        for row in rows {
+            let (source_id, secs) = row?;
+            totals.insert(source_id, SignedDuration::from_secs(secs));
+        }
+        Ok(totals)
+    }
+
     pub fn last_read_by_book(&self) -> Result<HashMap<i64, Timestamp>> {
         let mut stmt = self.conn.prepare(
             "SELECT so.book_id, max(se.ended_at)

@@ -2,6 +2,7 @@ use std::fmt::Write;
 
 use anyhow::{Context, Result, bail};
 use jiff::{SignedDuration, Span, Timestamp};
+use readr_core::db::Book;
 use readr_core::find::find_sources;
 use readr_core::model::Reader;
 use readr_core::stats::{best_streak, format_minutes, minutes, streak};
@@ -21,6 +22,10 @@ pub fn go(app: &App, query: Option<&str>) -> Result<String> {
                 .book
         }
     };
+    open_book(app, &book)
+}
+
+pub fn open_book(app: &App, book: &Book) -> Result<String> {
     let source = app
         .db
         .sources_for_book(book.id)?

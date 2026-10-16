@@ -10,6 +10,7 @@ mod notify;
 mod remind;
 mod shelf;
 mod status;
+mod tui;
 
 use std::process::ExitCode;
 
@@ -27,6 +28,7 @@ use crate::context::App;
     about = "Track daily reading across bookokrat, Preview and Apple Books"
 )]
 struct Cli {
+    /// Without a command readr opens the TUI
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -160,6 +162,10 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<()> {
     let app = App::load()?;
     let output = match cli.command {
+        None if std::io::IsTerminal::is_terminal(&std::io::stdout()) => {
+            tui::run(&app)?;
+            String::new()
+        }
         None | Some(Command::Status { short: false }) => {
             let today = status::Today::load(&app)?;
             let next = next::next_up(&app)?;

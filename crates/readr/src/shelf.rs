@@ -270,7 +270,10 @@ pub fn pick_book(app: &App, query: &str) -> Result<Book> {
 }
 
 pub fn set_status(app: &App, query: &str, status: BookStatus) -> Result<String> {
-    let book = pick_book(app, query)?;
+    apply_status(app, &pick_book(app, query)?, status)
+}
+
+pub fn apply_status(app: &App, book: &Book, status: BookStatus) -> Result<String> {
     app.db.set_book_status(book.id, status, Timestamp::now())?;
     let mut out = format!("{} is now {status}\n", book.title);
     if matches!(status, BookStatus::Done | BookStatus::Dropped)
@@ -301,12 +304,20 @@ fn promote_next_queued(app: &App, goal: Option<&str>) -> Result<Option<Book>> {
 }
 
 pub fn set_goal(app: &App, query: &str, goal: &str, move_history: bool) -> Result<String> {
-    let book = pick_book(app, query)?;
     let goal = match goal {
         "none" => None,
         key if app.config.goal(key).is_some() => Some(key),
         key => bail!("unknown goal {key:?}"),
     };
+    apply_goal(app, &pick_book(app, query)?, goal, move_history)
+}
+
+pub fn apply_goal(
+    app: &App,
+    book: &Book,
+    goal: Option<&str>,
+    move_history: bool,
+) -> Result<String> {
     app.db.set_book_goal(book.id, goal, move_history)?;
     let history = if move_history {
         "past sessions moved too"
