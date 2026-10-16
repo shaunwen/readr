@@ -13,6 +13,7 @@ use readr_core::tracker::Tracker;
 
 use crate::context::App;
 use crate::launchd::{self, Agent};
+use crate::remind::Reminders;
 
 pub fn run(mut app: App) -> Result<()> {
     let home = app.paths.home.clone();
@@ -29,6 +30,7 @@ pub fn run(mut app: App) -> Result<()> {
     )?;
     let mut config_mtime = mtime(&app.paths.config_file);
     let mut last_errors: Vec<String> = Vec::new();
+    let mut reminders = Reminders::default();
     log(&format!(
         "started; config {}, database {}",
         app.paths.config_file.display(),
@@ -67,6 +69,9 @@ pub fn run(mut app: App) -> Result<()> {
                 }
             }
             Err(error) => log(&format!("poll failed: {error:#}")),
+        }
+        if let Err(error) = reminders.tick(&app) {
+            log(&format!("reminders failed: {error:#}"));
         }
 
         std::thread::sleep(Duration::from_secs(app.config.tracking.poll_seconds));

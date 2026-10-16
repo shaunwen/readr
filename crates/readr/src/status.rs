@@ -7,6 +7,7 @@ use readr_core::model::Position;
 use readr_core::stats::{format_minutes, minutes, streak};
 
 use crate::context::App;
+use crate::next::NextUp;
 
 pub struct Today {
     pub total: SignedDuration,
@@ -40,7 +41,7 @@ pub fn short(today: &Today) -> String {
     format!("{}/{}m", minutes(today.total), minutes(today.goal))
 }
 
-pub fn long(app: &App, today: &Today) -> String {
+pub fn long(app: &App, today: &Today, next: Option<&NextUp>) -> String {
     let mut out = String::new();
     let mark = if today.done() { "  done" } else { "" };
     let _ = writeln!(
@@ -70,6 +71,9 @@ pub fn long(app: &App, today: &Today) -> String {
             format_minutes(session.active),
             movement(&session.start_position, &session.end_position),
         );
+    }
+    if let Some(next) = next {
+        let _ = writeln!(out, "Up next  {}  ({})", next.describe(), next.reason);
     }
     out
 }

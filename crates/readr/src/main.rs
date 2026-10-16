@@ -1,6 +1,10 @@
 mod context;
 mod daemon;
+mod email;
 mod launchd;
+mod next;
+mod notify;
+mod remind;
 mod status;
 
 use std::process::ExitCode;
@@ -34,6 +38,21 @@ enum Command {
         #[command(subcommand)]
         action: DaemonAction,
     },
+    /// Nightly email settings
+    Email {
+        #[command(subcommand)]
+        action: EmailAction,
+    },
+    /// Show a sample reminder in herdr (or as a macOS notification)
+    NotifyTest,
+}
+
+#[derive(Subcommand)]
+enum EmailAction {
+    /// Save the SMTP password for nightly.smtp_user in the macOS Keychain
+    SetPassword,
+    /// Send the nightly email now
+    Test,
 }
 
 #[derive(Subcommand)]
@@ -63,7 +82,8 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         None | Some(Command::Status { short: false }) => {
             let today = status::Today::load(&app)?;
-            print!("{}", status::long(&app, &today));
+            let next = next::next_up(&app)?;
+            print!("{}", status::long(&app, &today, next.as_ref()));
         }
         Some(Command::Status { short: true }) => {
             let today = status::Today::load(&app)?;
@@ -75,6 +95,45 @@ fn run(cli: Cli) -> Result<()> {
             DaemonAction::Uninstall => daemon::uninstall(&app)?,
             DaemonAction::Status => daemon::status(&app),
         },
+        Some(Command::Email { action }) => {
+            let Some(settings) = &app.config.nightly.email else {
+                anyhow::bail!(
+                    "set nightly.email_to and nightly.smtp_user in {}",
+                    app.paths.config_file.display()
+                );
+            };
+            match action {
+                EmailAction::SetPassword => {
+                    email::set_password(&settings.smtp_user)?;
+                    println!("saved Keychain item readr-smtp for {}", settings.smtp_user);
+                }
+                EmailAction::Test => {
+                    let today = status::Today::load(&app)?;
+                    let next = next::next_up(&app)?.map(|n| n.describe());
+                    let (subject, body) = remind::nightly_email(
+                        readr_core::stats::minutes(today.total),
+                        readr_core::stats::minutes(today.goal),
+                        today.streak,
+                        next.as_deref(),
+                    );
+                    email::send(settings, &subject, &body)?;
+                    println!("sent \"{subject}\" to {}", settings.to);
+                }
+            }
+        }
+        Some(Command::NotifyTest) => {
+            let today = status::Today::load(&app)?;
+            let next = next::next_up(&app)?.map(|n| n.describe());
+            let left =
+                readr_core::stats::minutes(readr_core::stats::remaining(today.total, today.goal));
+            let (title, body) = remind::remind_text(left, next.as_deref());
+            match notify::notify(&title, &body)? {
+                notify::Channel::Herdr => println!("shown in herdr: {title} / {body}"),
+                notify::Channel::MacOs { herdr_error } => println!(
+                    "shown as a macOS notification (herdr: {herdr_error}): {title} / {body}"
+                ),
+            }
+        }
     }
     Ok(())
 }
