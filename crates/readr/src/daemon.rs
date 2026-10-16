@@ -12,6 +12,7 @@ use readr_core::session::Rules;
 use readr_core::tracker::Tracker;
 
 use crate::context::App;
+use crate::launchd::{self, Agent};
 
 pub fn run(mut app: App) -> Result<()> {
     let home = app.paths.home.clone();
@@ -81,4 +82,52 @@ pub fn log(message: &str) {
         "{} {message}",
         Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ")
     );
+}
+
+const DAEMON_PATH: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+
+fn agent(app: &App) -> Result<Agent> {
+    let program = std::env::current_exe()?.canonicalize()?;
+    let mut env = vec![("PATH".to_string(), DAEMON_PATH.to_string())];
+    for key in ["XDG_CONFIG_HOME", "XDG_DATA_HOME"] {
+        if let Ok(value) = std::env::var(key) {
+            env.push((key.to_string(), value));
+        }
+    }
+    Ok(Agent::new(&app.paths.home, program, env))
+}
+
+pub fn install(app: &App) -> Result<()> {
+    let agent = agent(app)?;
+    if agent
+        .program
+        .components()
+        .any(|c| c.as_os_str() == "target")
+    {
+        eprintln!(
+            "warning: installing a build from {}; run `make install` and install from there instead",
+            agent.program.display()
+        );
+    }
+    agent.install()?;
+    println!("installed {}", agent.plist.display());
+    println!("program   {}", agent.program.display());
+    println!("log       {}", agent.log.display());
+    Ok(())
+}
+
+pub fn uninstall(app: &App) -> Result<()> {
+    let agent = agent(app)?;
+    agent.uninstall()?;
+    println!("removed {}", agent.plist.display());
+    Ok(())
+}
+
+pub fn status(app: &App) {
+    let log = app.paths.home.join("Library/Logs/readr/daemon.log");
+    match launchd::state() {
+        launchd::State::Running { pid } => println!("running (pid {pid}), log {}", log.display()),
+        launchd::State::Loaded { state } => println!("loaded but {state}, log {}", log.display()),
+        launchd::State::NotLoaded => println!("not installed; run `readr daemon install`"),
+    }
 }

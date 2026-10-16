@@ -1,5 +1,6 @@
 mod context;
 mod daemon;
+mod launchd;
 mod status;
 
 use std::process::ExitCode;
@@ -39,6 +40,12 @@ enum Command {
 enum DaemonAction {
     /// Run the tracker in the foreground
     Run,
+    /// Start the tracker at login with launchd
+    Install,
+    /// Stop the tracker and remove it from launchd
+    Uninstall,
+    /// Show whether the tracker is running
+    Status,
 }
 
 fn main() -> ExitCode {
@@ -62,9 +69,12 @@ fn run(cli: Cli) -> Result<()> {
             let today = status::Today::load(&app)?;
             println!("{}", status::short(&today));
         }
-        Some(Command::Daemon {
-            action: DaemonAction::Run,
-        }) => daemon::run(app)?,
+        Some(Command::Daemon { action }) => match action {
+            DaemonAction::Run => daemon::run(app)?,
+            DaemonAction::Install => daemon::install(&app)?,
+            DaemonAction::Uninstall => daemon::uninstall(&app)?,
+            DaemonAction::Status => daemon::status(&app),
+        },
     }
     Ok(())
 }
