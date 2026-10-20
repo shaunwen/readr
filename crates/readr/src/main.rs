@@ -3,6 +3,7 @@ mod context;
 mod daemon;
 mod doctor;
 mod email;
+mod forget;
 mod launch;
 mod launchd;
 mod next;
@@ -62,6 +63,22 @@ enum Command {
     },
     /// The last 7 days, streaks and minutes per goal
     Stats,
+    /// Stop tracking a book and delete its reading history
+    Forget {
+        /// Title, author or path
+        book: Option<String>,
+        /// Stop tracking but keep the past sessions
+        #[arg(long)]
+        keep_history: bool,
+        /// List forgotten books
+        #[arg(long, conflicts_with_all = ["book", "keep_history"])]
+        list: bool,
+        /// Don't ask before taking a shelf book off the shelf
+        #[arg(long, short)]
+        yes: bool,
+    },
+    /// Track a forgotten book again
+    Track { book: String },
     /// Goal maintenance
     Goal {
         #[command(subcommand)]
@@ -187,6 +204,24 @@ fn run(cli: Cli) -> Result<()> {
             Some(InboxAction::Ignore { source }) => commands::inbox_ignore(&app, &source)?,
         },
         Some(Command::Stats) => commands::stats(&app)?,
+        Some(Command::Forget { list: true, .. }) => forget::list(&app)?,
+        Some(Command::Forget {
+            book: Some(book),
+            keep_history,
+            yes,
+            ..
+        }) => forget::forget(
+            &app,
+            forget::ForgetOptions {
+                query: &book,
+                keep_history,
+                yes,
+            },
+        )?,
+        Some(Command::Forget { book: None, .. }) => {
+            bail!("name the book to forget, or use --list")
+        }
+        Some(Command::Track { book }) => forget::track(&app, &book)?,
         Some(Command::Goal {
             action: GoalAction::Rename { old, new },
         }) => commands::rename_goal(&app, &old, &new)?,

@@ -214,6 +214,12 @@ pub fn add(app: &App, options: AddOptions<'_>) -> Result<String> {
         .max_by_key(|t| t.len().min(60))
         .unwrap_or_else(|| main_title(&first_title));
     let author = matches.iter().find_map(|s| s.author.clone());
+    let retracked = if matches.iter().any(|s| s.untracked) || app.db.is_untracked_title(&title)? {
+        app.db.track_again(&title)?;
+        true
+    } else {
+        false
+    };
     let (goal, goal_note) = match options.goal {
         Some("none") => (None, String::new()),
         Some(key) => {
@@ -258,6 +264,9 @@ pub fn add(app: &App, options: AddOptions<'_>) -> Result<String> {
         goal.as_deref().unwrap_or("none"),
         readers.join(", ")
     );
+    if retracked {
+        let _ = writeln!(out, "it was forgotten; tracking it again from now on");
+    }
     let active = app
         .db
         .books()?

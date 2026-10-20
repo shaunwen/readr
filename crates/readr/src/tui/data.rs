@@ -76,7 +76,9 @@ impl Data {
             .db
             .all_sources()?
             .into_iter()
-            .filter(|s| s.book_id.is_none() && !s.ignored && s.reader != Reader::Manual)
+            .filter(|s| {
+                s.book_id.is_none() && !s.ignored && !s.untracked && s.reader != Reader::Manual
+            })
             .collect();
 
         let monday = today
