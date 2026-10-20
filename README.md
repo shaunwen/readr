@@ -37,6 +37,9 @@ readr log 25m "Atomic Habits" # reading away from the Mac
 readr inbox                   # reading in books not on the shelf
 readr inbox link <source> <book> | readr inbox ignore <source>
 readr stats                   # last 7 days, streaks, minutes per goal this week
+readr forget <book> [--keep-history] [--yes]   # stop tracking a book and delete its sessions
+readr forget --list           # books readr no longer tracks
+readr track <book>            # track a forgotten book again
 readr goal rename <old> <new>
 ```
 
@@ -80,6 +83,8 @@ Goals are suggested for new books from their folder under `library_dirs`, or fro
 | Apple Books | most recently opened book in `BKLibrary-*.sqlite` (read-only) | while it is the front app | `ZREADINGPROGRESS` |
 
 While a reader is in front, time counts even without keyboard or mouse input, so a long page counts in full. After `away_minutes` (default 15) without input, readr assumes you stepped away: the session is cut back to your last input plus `max_page_minutes`. Window focus works in any terminal whose window title follows the program's title (Rio does by default), but not inside herdr, whose window title is herdr's own. Turn it off with `tracking.window_focus = false`.
+
+To stop tracking a book, `readr forget <book>` deletes its sessions (or keeps them with `--keep-history`), clears readr's copy of its saved place, takes it off the shelf after asking, and skips it from then on in every reader, including new copies with the same title. Removing a bookmark in the reader itself does none of that: readr keeps its own records. `readr track <book>`, or adding it to the shelf again, resumes tracking from the next session; deleted sessions stay deleted.
 
 Sessions shorter than `min_session_seconds` are dropped. Sessions crossing midnight are split. Open sessions are saved on every poll, so `status` and the TUI include the session in progress, and a daemon restart loses nothing. Sessions you edit are never overwritten.
 

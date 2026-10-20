@@ -222,6 +222,8 @@ Crates: `ratatui`, `crossterm`, `tui-input` (text fields), `rusqlite` (bundled),
 
 - A saved place is not reading done: you can jump ahead, and anything before readr was untracked. The shelf shows the place as "at p.193/307", never as a percentage read, and time left uses only forward progress inside tracked sessions, capped at 1% of the book per minute so jumps don't count.
 
+- Forgetting a book marks every copy of it untracked (`book_sources.untracked`) and records its normalised title in `untracked_titles`, so a new copy with the same title is skipped too. The rows stay, so readr knows what to skip; sessions are deleted unless `--keep-history`. `readr track` and `readr shelf add` clear both marks.
+
 ## Not built yet
 - "Read elsewhere" sessions from iCloud-synced Apple Books progress.
 - PDF page labels (printed page numbers) for display.
