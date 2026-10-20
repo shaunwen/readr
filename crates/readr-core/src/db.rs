@@ -7,6 +7,7 @@ use jiff::civil::Date;
 use jiff::{SignedDuration, Timestamp};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
+use crate::find::title_key;
 use crate::model::{BookStatus, Position, Reader};
 use crate::session::{ActivityKind, OpenSession};
 
@@ -67,6 +68,14 @@ CREATE TABLE notifications (
     r#"
 ALTER TABLE book_sources ADD COLUMN collections TEXT;
 "#,
+    r#"
+ALTER TABLE book_sources ADD COLUMN untracked INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE untracked_titles (
+    key          TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    untracked_at TEXT NOT NULL
+);
+"#,
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,6 +110,7 @@ pub struct Source {
     pub last_position: Option<Position>,
     pub last_seen_at: Option<Timestamp>,
     pub collections: Vec<String>,
+    pub untracked: bool,
 }
 
 impl Source {
@@ -307,7 +317,7 @@ impl Db {
     pub fn inbox_sources(&self) -> Result<Vec<Source>> {
         self.query_sources(
             &format!(
-                "{SOURCE_SELECT} WHERE book_id IS NULL AND ignored = 0
+                "{SOURCE_SELECT} WHERE book_id IS NULL AND ignored = 0 AND untracked = 0
                  AND id IN (SELECT source_id FROM sessions)
                  ORDER BY last_seen_at DESC"
             ),
@@ -658,6 +668,104 @@ impl Db {
         Ok(totals)
     }
 
+    pub fn forget(
+        &self,
+        source_ids: &[i64],
+        title: &str,
+        keep_history: bool,
+        at: Timestamp,
+    ) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut sessions = 0;
+        for source_id in source_ids {
+            tx.execute(
+                "UPDATE book_sources SET untracked = 1, last_progress = NULL, last_position = NULL
+                 WHERE id = ?1",
+                [source_id],
+            )?;
+            sessions += if keep_history {
+                tx.execute(
+                    "UPDATE sessions SET open = 0 WHERE source_id = ?1 AND open = 1",
+                    [source_id],
+                )?;
+                0
+            } else {
+                tx.execute("DELETE FROM sessions WHERE source_id = ?1", [source_id])?
+            };
+        }
+        tx.execute(
+            "INSERT OR REPLACE INTO untracked_titles (key, title, untracked_at) VALUES (?1, ?2, ?3)",
+            params![title_key(title), title, at.to_string()],
+        )?;
+        tx.commit()?;
+        Ok(sessions)
+    }
+
+    pub fn track_again(&self, title: &str) -> Result<usize> {
+        let key = title_key(title);
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM untracked_titles WHERE key = ?1", [&key])?;
+        let mut stmt =
+            tx.prepare("SELECT id, title, locator FROM book_sources WHERE untracked = 1")?;
+        let rows: Vec<(i64, Option<String>, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        drop(stmt);
+        let mut count = 0;
+        for (id, source_title, locator) in rows {
+            let display = source_title
+                .or_else(|| crate::readers::file_title(&locator))
+                .unwrap_or(locator);
+            if title_key(&display) == key {
+                count += tx.execute("UPDATE book_sources SET untracked = 0 WHERE id = ?1", [id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(count)
+    }
+
+    pub fn is_untracked_title(&self, title: &str) -> Result<bool> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT 1 FROM untracked_titles WHERE key = ?1",
+                [title_key(title)],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    pub fn mark_untracked(&self, source_id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE book_sources SET untracked = 1, last_progress = NULL, last_position = NULL
+             WHERE id = ?1",
+            [source_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn untracked_titles(&self) -> Result<Vec<(String, Timestamp)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT title, untracked_at FROM untracked_titles ORDER BY title")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut titles = Vec::new();
+        for row in rows {
+            let (title, at) = row?;
+            titles.push((title, at.parse()?));
+        }
+        Ok(titles)
+    }
+
+    pub fn delete_book(&self, book_id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM books WHERE id = ?1", [book_id])?;
+        Ok(())
+    }
+
     pub fn notified(&self, day: Date, kind: &str) -> Result<bool> {
         Ok(self
             .conn
@@ -683,7 +791,7 @@ impl Db {
 const MAX_PROGRESS_PER_MINUTE: f64 = 0.01;
 
 const SOURCE_SELECT: &str = "SELECT id, book_id, reader, locator, title, author, ignored,
-    last_progress, last_position, last_seen_at, collections FROM book_sources";
+    last_progress, last_position, last_seen_at, collections, untracked FROM book_sources";
 
 fn source_from_row(row: &Row<'_>) -> rusqlite::Result<Result<Source>> {
     Ok((|| -> Result<Source> {
@@ -704,6 +812,7 @@ fn source_from_row(row: &Row<'_>) -> rusqlite::Result<Result<Source>> {
                 .get::<_, Option<String>>(10)?
                 .map(|text| text.lines().map(str::to_string).collect())
                 .unwrap_or_default(),
+            untracked: row.get(11)?,
         })
     })())
 }
@@ -1071,6 +1180,94 @@ mod tests {
 
         // then
         assert!((read - (0.03 + 0.02)).abs() < 1e-9, "{read}");
+    }
+
+    #[test]
+    fn forgetting_deletes_history_clears_the_place_and_remembers_the_title() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let source = db
+            .upsert_source(Reader::Bookokrat, "/books/walden.pdf", Some("Walden"), None)
+            .unwrap();
+        db.set_source_position(
+            source.id,
+            &Position::new(Some(0.4), Some("p.40".into())),
+            now(),
+        )
+        .unwrap();
+        db.save_session(&session(source.id, 12), false).unwrap();
+
+        // when
+        let deleted = db.forget(&[source.id], "Walden", false, now()).unwrap();
+
+        // then
+        let source = db.source(source.id).unwrap().unwrap();
+        assert_eq!(deleted, 1);
+        assert!(source.untracked);
+        assert_eq!(source.last_position, None);
+        assert!(db.sessions_between(day(), day()).unwrap().is_empty());
+        assert!(
+            db.is_untracked_title("walden: or, life in the woods")
+                .unwrap()
+        );
+        assert_eq!(db.untracked_titles().unwrap()[0].0, "Walden");
+    }
+
+    #[test]
+    fn forgetting_with_history_keeps_sessions_but_closes_open_ones() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let source = db
+            .upsert_source(Reader::Preview, "/books/walden.pdf", Some("Walden"), None)
+            .unwrap();
+        db.save_session(&session(source.id, 12), true).unwrap();
+
+        // when
+        let deleted = db.forget(&[source.id], "Walden", true, now()).unwrap();
+
+        // then
+        assert_eq!(deleted, 0);
+        let sessions = db.sessions_between(day(), day()).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(!sessions[0].open);
+    }
+
+    #[test]
+    fn tracking_again_clears_every_copy_with_that_title() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let pdf = db
+            .upsert_source(Reader::Bookokrat, "/books/walden.pdf", Some("Walden"), None)
+            .unwrap();
+        let books = db
+            .upsert_source(Reader::AppleBooks, "asset-9", Some("Walden"), None)
+            .unwrap();
+        db.forget(&[pdf.id, books.id], "Walden", false, now())
+            .unwrap();
+
+        // when
+        let tracked = db.track_again("Walden").unwrap();
+
+        // then
+        assert_eq!(tracked, 2);
+        assert!(!db.source(pdf.id).unwrap().unwrap().untracked);
+        assert!(!db.is_untracked_title("Walden").unwrap());
+    }
+
+    #[test]
+    fn untracked_books_stay_out_of_the_inbox() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let source = db
+            .upsert_source(Reader::Preview, "/books/walden.pdf", Some("Walden"), None)
+            .unwrap();
+        db.save_session(&session(source.id, 5), false).unwrap();
+
+        // when
+        db.forget(&[source.id], "Walden", true, now()).unwrap();
+
+        // then
+        assert!(db.inbox_sources().unwrap().is_empty());
     }
 
     #[test]

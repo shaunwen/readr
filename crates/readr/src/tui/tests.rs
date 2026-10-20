@@ -47,6 +47,7 @@ fn source(id: i64, book_id: Option<i64>, title: &str, reader: Reader) -> Source 
         last_position: Some(Position::new(Some(0.2), Some("p.9/300".into()))),
         last_seen_at: Some(at("09:00")),
         collections: Vec::new(),
+        untracked: false,
     }
 }
 

@@ -237,6 +237,10 @@ impl Engine {
         vec![Change::Save(session.clone())]
     }
 
+    pub fn forget(&mut self, source_id: i64) {
+        self.open.remove(&source_id);
+    }
+
     pub fn update_position(&mut self, source_id: i64, position: Position) -> Vec<Change> {
         let Some(session) = self.open.get_mut(&source_id) else {
             return Vec::new();

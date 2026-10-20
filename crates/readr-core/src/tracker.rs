@@ -64,7 +64,9 @@ impl Tracker {
                 kind,
                 position,
             } => {
-                let source = upsert(db, &book)?;
+                let Some(source) = self.tracked(db, &book)? else {
+                    return Ok(Vec::new());
+                };
                 match &position {
                     Some(position) => db.set_source_position(source.id, position, at)?,
                     None => db.touch_source(source.id, at)?,
@@ -78,7 +80,9 @@ impl Tracker {
                 }))
             }
             ReaderEvent::Position { book, at, position } => {
-                let source = upsert(db, &book)?;
+                let Some(source) = self.tracked(db, &book)? else {
+                    return Ok(Vec::new());
+                };
                 db.set_source_position(source.id, &position, at)?;
                 let changes = self.engine.update_position(source.id, position.clone());
                 if changes.is_empty() {
@@ -90,8 +94,8 @@ impl Tracker {
                 book,
                 last_input_at,
             } => match db.source_by_locator(book.reader, &book.locator)? {
-                Some(source) => Ok(self.engine.away(source.id, last_input_at)),
-                None => Ok(Vec::new()),
+                Some(source) if !source.untracked => Ok(self.engine.away(source.id, last_input_at)),
+                _ => Ok(Vec::new()),
             },
             ReaderEvent::Closed { reader, at } => {
                 let open: Vec<i64> = self.engine.open_sessions().map(|s| s.source_id).collect();
@@ -104,6 +108,18 @@ impl Tracker {
                 Ok(changes)
             }
         }
+    }
+
+    fn tracked(&mut self, db: &Db, book: &BookRef) -> Result<Option<crate::db::Source>> {
+        let source = upsert(db, book)?;
+        if !source.untracked && !db.is_untracked_title(&source.display_title())? {
+            return Ok(Some(source));
+        }
+        if !source.untracked {
+            db.mark_untracked(source.id)?;
+        }
+        self.engine.forget(source.id);
+        Ok(None)
     }
 
     fn apply(&mut self, db: &Db, changes: Vec<Change>) -> Result<()> {
@@ -419,6 +435,84 @@ mod tests {
         let sessions = harness.today();
         assert!(!sessions[0].open);
         assert_eq!(sessions[0].active, SignedDuration::from_mins(5));
+    }
+
+    #[test]
+    fn untracked_books_are_not_recorded() {
+        // given
+        let mut harness = Harness::new(Vec::new());
+        harness.poll(
+            "2026-10-16T09:00:00Z",
+            vec![turn("2026-10-16T09:00:00Z", 4)],
+        );
+        let source = harness
+            .db
+            .source_by_locator(Reader::Bookokrat, "/Books/walden.pdf")
+            .unwrap()
+            .unwrap();
+        harness
+            .db
+            .forget(
+                &[source.id],
+                "Walden",
+                false,
+                "2026-10-16T09:01:00Z".parse().unwrap(),
+            )
+            .unwrap();
+
+        // when
+        harness.poll(
+            "2026-10-16T09:03:00Z",
+            vec![turn("2026-10-16T09:03:00Z", 5)],
+        );
+        harness.poll("2026-10-16T09:20:00Z", Vec::new());
+
+        // then
+        assert!(harness.today().is_empty());
+        let source = harness.db.source(source.id).unwrap().unwrap();
+        assert_eq!(source.last_position, None);
+    }
+
+    #[test]
+    fn a_new_copy_of_a_forgotten_title_is_skipped_too() {
+        // given
+        let mut harness = Harness::new(Vec::new());
+        harness
+            .db
+            .forget(
+                &[],
+                "Walden",
+                false,
+                "2026-10-16T08:00:00Z".parse().unwrap(),
+            )
+            .unwrap();
+        let copy = BookRef {
+            reader: Reader::Preview,
+            locator: "/Downloads/walden-annotated.pdf".into(),
+            title: Some("Walden: Or, Life in the Woods".into()),
+            author: None,
+            collections: Vec::new(),
+        };
+
+        // when
+        harness.poll(
+            "2026-10-16T09:00:00Z",
+            vec![ReaderEvent::Activity {
+                book: copy,
+                at: "2026-10-16T09:00:00Z".parse().unwrap(),
+                kind: ActivityKind::Focused,
+                position: None,
+            }],
+        );
+
+        // then
+        assert!(harness.today().is_empty());
+        let source = harness
+            .db
+            .source_by_locator(Reader::Preview, "/Downloads/walden-annotated.pdf")
+            .unwrap()
+            .unwrap();
+        assert!(source.untracked);
     }
 
     #[test]

@@ -57,10 +57,10 @@ pub fn main_title(title: &str) -> String {
 }
 
 pub fn same_title(a: &str, b: &str) -> bool {
-    normalize(a) == normalize(b)
+    title_key(a) == title_key(b)
 }
 
-fn normalize(title: &str) -> String {
+pub fn title_key(title: &str) -> String {
     title
         .split([':', '('])
         .next()
@@ -103,6 +103,7 @@ mod tests {
             last_position: None,
             last_seen_at: None,
             collections: Vec::new(),
+            untracked: false,
         }
     }
 
