@@ -2,7 +2,7 @@ use std::fmt::Write;
 use std::process::Command;
 
 use anyhow::Result;
-use readr_core::config::{DEFAULT_CONFIG_TOML, NotifyChannel};
+use readr_core::config::NotifyChannel;
 use readr_core::readers::desktop::Desktop;
 use readr_core::readers::{MacDesktop, apple_books, bookokrat, preview};
 
@@ -40,18 +40,22 @@ pub fn doctor(app: &App) -> Result<String> {
     };
     let home = &app.paths.home;
 
+    report.ok(
+        "settings",
+        format!(
+            "in the database · {} goals · nightly check {} · change with c in the TUI or `readr config set`",
+            app.config.goals.len(),
+            app.config.nightly.at.strftime("%H:%M")
+        ),
+    );
     if app.paths.config_file.exists() {
-        report.ok(
-            "config",
+        report.info(
+            "config.toml",
             format!(
-                "{} · {} goals · nightly check {}",
-                app.paths.config_file.display(),
-                app.config.goals.len(),
-                app.config.nightly.at.strftime("%H:%M")
+                "{} is no longer read; `readr config import` loads it again",
+                app.paths.config_file.display()
             ),
         );
-    } else {
-        report.warn("config", "no config file yet; run `readr init`");
     }
     let books = app.db.books()?.len();
     let sources = app.db.all_sources()?.len();
@@ -182,7 +186,7 @@ pub fn doctor(app: &App) -> Result<String> {
         ),
         None => report.info(
             "email",
-            "off; set nightly.email_to and nightly.smtp_user in config.toml",
+            "off; set nightly.email_to and nightly.smtp_user (c in the TUI, or `readr config set`)",
         ),
     }
 
@@ -234,19 +238,16 @@ fn last_focus_line(log: &str) -> Option<&str> {
 
 pub fn init(app: &App) -> Result<String> {
     let mut out = String::new();
-    if app.paths.config_file.exists() {
-        let _ = writeln!(out, "config exists: {}", app.paths.config_file.display());
-    } else {
-        if let Some(dir) = app.paths.config_file.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        std::fs::write(&app.paths.config_file, DEFAULT_CONFIG_TOML)?;
-        let _ = writeln!(out, "wrote {}", app.paths.config_file.display());
-    }
     let _ = writeln!(out, "database: {}", app.paths.db_file.display());
     let _ = writeln!(
         out,
-        "\nnext:\n  1. edit goals, reminder times and email in the config\n  2. readr email set-password      (if you set nightly.email_to)\n  3. readr daemon install\n  4. grant Full Disk Access and Accessibility to {} (open \"{FULL_DISK_ACCESS}\")\n  5. readr shelf add <title> --goal <goal>\n  6. readr doctor",
+        "settings: {} goals, {} min a day; `readr config` shows them all",
+        app.config.goals.len(),
+        app.config.daily_goal_minutes
+    );
+    let _ = writeln!(
+        out,
+        "\nnext:\n  1. set goals, reminder times and email: press c in `readr`, or `readr config set <key> <value>`\n  2. readr email set-password      (if you set nightly.email_to)\n  3. readr daemon install\n  4. grant Full Disk Access and Accessibility to {} (open \"{FULL_DISK_ACCESS}\")\n  5. readr shelf add <title> --goal <goal>\n  6. readr doctor",
         std::env::current_exe()?.display()
     );
     Ok(out)

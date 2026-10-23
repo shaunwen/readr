@@ -131,16 +131,13 @@ pub fn inbox_ignore(app: &App, source_query: &str) -> Result<String> {
 }
 
 pub fn rename_goal(app: &App, old: &str, new: &str) -> Result<String> {
-    let books = app.db.rename_goal(old, new)?;
-    let mut out = format!("renamed goal {old} → {new} on {books} books and their sessions\n");
-    if app.config.goal(new).is_none() {
-        let _ = writeln!(
-            out,
-            "now change key = {old:?} to key = {new:?} in {}",
-            app.paths.config_file.display()
-        );
+    if app.config.goal(old).is_some() {
+        app.config.with_goal_field(old, "key", new)?;
     }
-    Ok(out)
+    let books = app.db.rename_goal(old, new)?;
+    Ok(format!(
+        "renamed goal {old} → {new} on {books} books and their sessions\n"
+    ))
 }
 
 pub fn stats(app: &App) -> Result<String> {

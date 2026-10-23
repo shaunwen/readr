@@ -7,9 +7,11 @@ use jiff::civil::Date;
 use jiff::{SignedDuration, Timestamp};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
+use crate::config::{Config, Goal};
 use crate::find::title_key;
 use crate::model::{BookStatus, Position, Reader};
 use crate::session::{ActivityKind, OpenSession};
+use crate::settings::SETTINGS;
 
 const MIGRATIONS: &[&str] = &[
     r#"
@@ -74,6 +76,21 @@ CREATE TABLE untracked_titles (
     key          TEXT PRIMARY KEY,
     title        TEXT NOT NULL,
     untracked_at TEXT NOT NULL
+);
+"#,
+    r#"
+CREATE TABLE settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE goals (
+    key               TEXT PRIMARY KEY,
+    position          INTEGER NOT NULL,
+    label             TEXT NOT NULL,
+    color             TEXT,
+    weekly_minutes    INTEGER,
+    folders           TEXT NOT NULL,
+    books_collections TEXT NOT NULL
 );
 "#,
 ];
@@ -254,8 +271,86 @@ impl Db {
         let tx = self.conn.unchecked_transaction()?;
         let books = tx.execute("UPDATE books SET goal = ?2 WHERE goal = ?1", [old, new])?;
         tx.execute("UPDATE sessions SET goal = ?2 WHERE goal = ?1", [old, new])?;
+        tx.execute("UPDATE goals SET key = ?2 WHERE key = ?1", [old, new])?;
         tx.commit()?;
         Ok(books)
+    }
+
+    pub fn config(&self) -> Result<Option<Config>> {
+        let mut stmt = self.conn.prepare("SELECT key, value FROM settings")?;
+        let settings: Vec<(String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        if settings.is_empty() {
+            return Ok(None);
+        }
+        let mut config = Config::parse("")?;
+        for (key, value) in &settings {
+            if crate::settings::setting(key).is_some() {
+                config
+                    .set(key, value)
+                    .with_context(|| format!("setting {key} in the database"))?;
+            }
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT key, label, color, weekly_minutes, folders, books_collections
+             FROM goals ORDER BY position, key",
+        )?;
+        config.goals = stmt
+            .query_map([], |row| {
+                Ok((
+                    Goal {
+                        key: row.get(0)?,
+                        label: row.get(1)?,
+                        color: row.get(2)?,
+                        weekly_minutes: row.get(3)?,
+                        folders: Vec::new(),
+                        books_collections: Vec::new(),
+                    },
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?
+            .map(|row| {
+                let (mut goal, folders, collections) = row?;
+                goal.folders = serde_json::from_str(&folders)?;
+                goal.books_collections = serde_json::from_str(&collections)?;
+                Ok(goal)
+            })
+            .collect::<Result<_>>()?;
+        config.validate().context("settings in the database")?;
+        Ok(Some(config))
+    }
+
+    pub fn save_config(&self, config: &Config) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM settings", [])?;
+        for field in SETTINGS {
+            if let Some(value) = config.get(field.key) {
+                tx.execute(
+                    "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                    params![field.key, value],
+                )?;
+            }
+        }
+        tx.execute("DELETE FROM goals", [])?;
+        for (position, goal) in (0_i64..).zip(&config.goals) {
+            tx.execute(
+                "INSERT INTO goals (key, position, label, color, weekly_minutes, folders, books_collections)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    goal.key,
+                    position,
+                    goal.label,
+                    goal.color,
+                    goal.weekly_minutes,
+                    serde_json::to_string(&goal.folders)?,
+                    serde_json::to_string(&goal.books_collections)?,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn goals_in_use(&self) -> Result<Vec<String>> {
@@ -1084,6 +1179,72 @@ mod tests {
         // then
         assert_eq!(renamed, 1);
         assert_eq!(db.goals_in_use().unwrap(), vec!["craft".to_string()]);
+    }
+
+    #[test]
+    fn a_new_database_has_no_settings_yet() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+
+        // when
+        let config = db.config().unwrap();
+
+        // then
+        assert_eq!(config, None);
+    }
+
+    #[test]
+    fn saved_settings_and_goals_load_back_in_order() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let config = Config::parse(crate::config::DEFAULT_CONFIG_TOML)
+            .unwrap()
+            .with_setting("daily_goal_minutes", "30")
+            .unwrap()
+            .with_goal_moved("competence", -3)
+            .with_goal_field("health", "books_collections", "Health, Food")
+            .unwrap();
+
+        // when
+        db.save_config(&config).unwrap();
+
+        // then
+        assert_eq!(db.config().unwrap(), Some(config));
+    }
+
+    #[test]
+    fn renaming_a_goal_renames_its_settings_row() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        db.save_config(&Config::parse(crate::config::DEFAULT_CONFIG_TOML).unwrap())
+            .unwrap();
+
+        // when
+        db.rename_goal("competence", "craft").unwrap();
+
+        // then
+        let config = db.config().unwrap().unwrap();
+        assert_eq!(config.goals[3].key, "craft");
+        assert_eq!(config.goals[3].label, "Circle of competence");
+    }
+
+    #[test]
+    fn settings_from_a_newer_readr_are_ignored() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        db.save_config(&Config::parse("").unwrap()).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO settings (key, value) VALUES ('future.knob', 'x')",
+                [],
+            )
+            .unwrap();
+
+        // when
+        let config = db.config().unwrap();
+
+        // then
+        assert_eq!(config, Some(Config::parse("").unwrap()));
     }
 
     #[test]

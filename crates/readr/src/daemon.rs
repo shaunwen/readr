@@ -1,9 +1,7 @@
-use std::path::Path;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use anyhow::Result;
 use jiff::{SignedDuration, Timestamp};
-use readr_core::config::Config;
 use readr_core::readers::apple_books::{self, AppleBooks};
 use readr_core::readers::bookokrat::{self, Bookokrat};
 use readr_core::readers::preview::{self, Preview};
@@ -28,30 +26,33 @@ pub fn run(mut app: App) -> Result<()> {
         app.tz.clone(),
         adapters,
     )?;
-    let mut config_mtime = mtime(&app.paths.config_file);
+    let mut config_error: Option<String> = None;
     let mut last_errors: Vec<String> = Vec::new();
     let mut reminders = Reminders::default();
     let mut cleared_reminders_at: Option<std::time::Instant> = None;
     let mut focus_trusted = None;
     log(&format!(
-        "started; config {}, database {}",
-        app.paths.config_file.display(),
+        "started; database {}",
         app.paths.db_file.display()
     ));
 
     loop {
-        let current_mtime = mtime(&app.paths.config_file);
-        if current_mtime != config_mtime {
-            config_mtime = current_mtime;
-            match Config::load(&app.paths.config_file) {
-                Ok(config) => {
-                    tracker.set_rules(Rules::from_tracking(&config.tracking));
-                    app.config = config;
-                    log("config reloaded");
+        match app.db.config() {
+            Ok(Some(config)) if config != app.config => {
+                tracker.set_rules(Rules::from_tracking(&config.tracking));
+                app.config = config;
+                config_error = None;
+                log("settings changed");
+            }
+            Ok(_) => config_error = None,
+            Err(error) => {
+                let error = format!("{error:#}");
+                if config_error.as_ref() != Some(&error) {
+                    log(&format!(
+                        "settings error, keeping the last good ones: {error}"
+                    ));
                 }
-                Err(error) => log(&format!(
-                    "config error, keeping last good config: {error:#}"
-                )),
+                config_error = Some(error);
             }
         }
 
@@ -107,10 +108,6 @@ pub fn run(mut app: App) -> Result<()> {
 
         std::thread::sleep(Duration::from_secs(app.config.tracking.poll_seconds));
     }
-}
-
-fn mtime(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 pub fn log(message: &str) {

@@ -183,6 +183,12 @@ impl Config {
         }
     }
 
+    pub fn load_file(path: &Path) -> Result<Self> {
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        Self::parse(&text).with_context(|| format!("in {}", path.display()))
+    }
+
     pub fn parse(text: &str) -> Result<Self> {
         let file: FileConfig = toml::from_str(text)?;
         let config = Self::from_file(file)?;

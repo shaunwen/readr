@@ -9,6 +9,7 @@ mod launchd;
 mod next;
 mod notify;
 mod remind;
+mod settings;
 mod shelf;
 mod status;
 mod tui;
@@ -79,6 +80,11 @@ enum Command {
     },
     /// Track a forgotten book again
     Track { book: String },
+    /// Settings and goals, stored in the database (the TUI edits them with c)
+    Config {
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
+    },
     /// Goal maintenance
     Goal {
         #[command(subcommand)]
@@ -107,7 +113,7 @@ enum ShelfAction {
     /// Put a book on the shelf by title, author or file path
     Add {
         query: String,
-        /// Goal key from config.toml, or "none"
+        /// Goal key (see `readr config`), or "none"
         #[arg(long)]
         goal: Option<String>,
         /// Add to the queue instead of the active books
@@ -141,8 +147,18 @@ enum InboxAction {
 }
 
 #[derive(Subcommand)]
+enum ConfigAction {
+    /// Print every setting and goal as TOML
+    Show,
+    /// Change one setting, e.g. `readr config set daily_goal_minutes 30`
+    Set { key: String, value: String },
+    /// Replace every setting and goal with a TOML file, by default ~/.config/readr/config.toml
+    Import { file: Option<std::path::PathBuf> },
+}
+
+#[derive(Subcommand)]
 enum GoalAction {
-    /// Rename a goal key in the database (then edit config.toml)
+    /// Rename a goal key on the goal, its books and their sessions
     Rename { old: String, new: String },
 }
 
@@ -222,6 +238,15 @@ fn run(cli: Cli) -> Result<()> {
             bail!("name the book to forget, or use --list")
         }
         Some(Command::Track { book }) => forget::track(&app, &book)?,
+        Some(Command::Config { action }) => match action {
+            None | Some(ConfigAction::Show) => settings::show(&app),
+            Some(ConfigAction::Set { key, value }) => {
+                format!("{}\n", settings::set(&app, &key, &value)?)
+            }
+            Some(ConfigAction::Import { file }) => {
+                settings::import(&app, file.as_deref().unwrap_or(&app.paths.config_file))?
+            }
+        },
         Some(Command::Goal {
             action: GoalAction::Rename { old, new },
         }) => commands::rename_goal(&app, &old, &new)?,
@@ -269,8 +294,7 @@ fn shelf_command(app: &App, action: Option<ShelfAction>) -> Result<String> {
 fn email_command(app: &App, action: EmailAction) -> Result<String> {
     let Some(settings) = &app.config.nightly.email() else {
         bail!(
-            "set nightly.email_to and nightly.smtp_user in {}",
-            app.paths.config_file.display()
+            "email is off; set it with `readr config set nightly.email_to <address>` and `readr config set nightly.smtp_user <login>`, or press c in the TUI"
         );
     };
     match action {
