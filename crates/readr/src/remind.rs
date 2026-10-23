@@ -15,9 +15,14 @@ const EMAIL_RETRY: SignedDuration = SignedDuration::from_mins(10);
 #[derive(Default)]
 pub struct Reminders {
     last_email_attempt: Option<Timestamp>,
+    last_notified_at: Option<std::time::Instant>,
 }
 
 impl Reminders {
+    pub fn last_notified_at(&self) -> Option<std::time::Instant> {
+        self.last_notified_at
+    }
+
     pub fn tick(&mut self, app: &App) -> Result<()> {
         let now = app.now();
         let day = now.date();
@@ -32,17 +37,20 @@ impl Reminders {
             Due::Remind { .. } => {
                 let (title, body) = remind_text(left, next.as_deref());
                 send_notification(app, &title, &body);
+                self.last_notified_at = Some(std::time::Instant::now());
                 app.db.mark_notified(day, &due.kind(), now.timestamp())?;
             }
             Due::GoalReached => {
                 let (title, body) = done_text(minutes(today.total), today.streak);
                 send_notification(app, &title, &body);
+                self.last_notified_at = Some(std::time::Instant::now());
                 app.db.mark_notified(day, &due.kind(), now.timestamp())?;
             }
             Due::Nightly => {
                 if !already(NIGHTLY_NOTICE) {
                     let (title, body) = remind_text(left, next.as_deref());
                     send_notification(app, &title, &body);
+                    self.last_notified_at = Some(std::time::Instant::now());
                     app.db.mark_notified(day, NIGHTLY_NOTICE, now.timestamp())?;
                 }
                 let Some(settings) = &app.config.nightly.email else {

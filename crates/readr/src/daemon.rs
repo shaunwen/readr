@@ -31,6 +31,7 @@ pub fn run(mut app: App) -> Result<()> {
     let mut config_mtime = mtime(&app.paths.config_file);
     let mut last_errors: Vec<String> = Vec::new();
     let mut reminders = Reminders::default();
+    let mut cleared_reminders_at: Option<std::time::Instant> = None;
     let mut focus_trusted = None;
     log(&format!(
         "started; config {}, database {}",
@@ -95,6 +96,13 @@ pub fn run(mut app: App) -> Result<()> {
         if let Err(error) = reminders.tick(&app) {
             log(&format!("reminders failed: {error:#}"));
         }
+        let settled = reminders
+            .last_notified_at()
+            .is_none_or(|at| at.elapsed() >= REMINDER_SETTLE);
+        if settled && cleared_reminders_at.is_none_or(|at| at.elapsed() >= REMINDER_CLEANUP) {
+            crate::notify::clear_older_reminders();
+            cleared_reminders_at = Some(std::time::Instant::now());
+        }
 
         std::thread::sleep(Duration::from_secs(app.config.tracking.poll_seconds));
     }
@@ -110,6 +118,9 @@ pub fn log(message: &str) {
         Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ")
     );
 }
+
+const REMINDER_CLEANUP: Duration = Duration::from_secs(300);
+const REMINDER_SETTLE: Duration = Duration::from_secs(60);
 
 const DAEMON_PATH: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 
