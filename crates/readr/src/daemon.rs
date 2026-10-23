@@ -43,7 +43,7 @@ pub fn run(mut app: App) -> Result<()> {
         let current_mtime = mtime(&app.paths.config_file);
         if current_mtime != config_mtime {
             config_mtime = current_mtime;
-            match Config::load(&app.paths.config_file, &app.paths.home) {
+            match Config::load(&app.paths.config_file) {
                 Ok(config) => {
                     tracker.set_rules(Rules::from_tracking(&config.tracking));
                     app.config = config;
@@ -75,12 +75,13 @@ pub fn run(mut app: App) -> Result<()> {
             }
         }
 
+        let library_dirs = app.config.library_paths(&home);
         let ctx = PollContext {
             now: Timestamp::now(),
             desktop: &MacDesktop,
             away_after: SignedDuration::from_mins(i64::from(app.config.tracking.away_minutes)),
             window_focus: app.config.tracking.window_focus,
-            library_dirs: &app.config.library_dirs,
+            library_dirs: &library_dirs,
         };
         match tracker.poll(&app.db, &ctx) {
             Ok(report) => {

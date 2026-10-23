@@ -79,12 +79,11 @@ pub fn suggest<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
 
     use super::*;
 
     fn config(text: &str) -> Config {
-        Config::parse(text, Path::new("/Users/reader")).unwrap()
+        Config::parse(text).unwrap()
     }
 
     fn goals() -> &'static str {

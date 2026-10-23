@@ -61,12 +61,11 @@ pub fn due(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
 
     use super::*;
 
     fn config() -> Config {
-        Config::parse("", Path::new("/Users/reader")).unwrap()
+        Config::parse("").unwrap()
     }
 
     fn at(time: &str) -> Zoned {
@@ -185,8 +184,7 @@ mod tests {
     #[test]
     fn nightly_time_is_configurable() {
         // given
-        let config =
-            Config::parse("[nightly]\nat = \"22:30\"", Path::new("/Users/reader")).unwrap();
+        let config = Config::parse("[nightly]\nat = \"22:30\"").unwrap();
 
         // when
         let before = due(&config, &at("21:30"), mins(8), never);

@@ -12,7 +12,7 @@ pub const DEFAULT_CONFIG_TOML: &str = include_str!("default_config.toml");
 pub struct Config {
     pub daily_goal_minutes: u32,
     pub count_off_shelf: bool,
-    pub library_dirs: Vec<PathBuf>,
+    pub library_dirs: Vec<String>,
     pub remind: Remind,
     pub nightly: Nightly,
     pub tracking: Tracking,
@@ -151,19 +151,19 @@ struct FileNotify {
 }
 
 impl Config {
-    pub fn load(path: &Path, home: &Path) -> Result<Self> {
+    pub fn load(path: &Path) -> Result<Self> {
         match std::fs::read_to_string(path) {
-            Ok(text) => Self::parse(&text, home).with_context(|| format!("in {}", path.display())),
+            Ok(text) => Self::parse(&text).with_context(|| format!("in {}", path.display())),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Self::parse(DEFAULT_CONFIG_TOML, home)
+                Self::parse(DEFAULT_CONFIG_TOML)
             }
             Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
         }
     }
 
-    pub fn parse(text: &str, home: &Path) -> Result<Self> {
+    pub fn parse(text: &str) -> Result<Self> {
         let file: FileConfig = toml::from_str(text)?;
-        let config = Self::from_file(file, home)?;
+        let config = Self::from_file(file)?;
         config.validate()?;
         Ok(config)
     }
@@ -191,11 +191,18 @@ impl Config {
         self.goals.iter().find(|goal| goal.key == key)
     }
 
+    pub fn library_paths(&self, home: &Path) -> Vec<PathBuf> {
+        self.library_dirs
+            .iter()
+            .map(|dir| expand_home(dir, home))
+            .collect()
+    }
+
     pub fn daily_goal(&self) -> SignedDuration {
         SignedDuration::from_mins(i64::from(self.daily_goal_minutes))
     }
 
-    fn from_file(file: FileConfig, home: &Path) -> Result<Self> {
+    fn from_file(file: FileConfig) -> Result<Self> {
         if file.tracking.idle_seconds.is_some() {
             bail!("tracking.idle_seconds was replaced by tracking.away_minutes");
         }
@@ -215,10 +222,7 @@ impl Config {
         };
         let library_dirs = file
             .library_dirs
-            .unwrap_or_else(|| vec!["~/Documents/Books".into()])
-            .iter()
-            .map(|dir| expand_home(dir, home))
-            .collect();
+            .unwrap_or_else(|| vec!["~/Documents/Books".into()]);
         Ok(Self {
             daily_goal_minutes: file.daily_goal_minutes.unwrap_or(20),
             count_off_shelf: file.count_off_shelf.unwrap_or(false),
@@ -310,10 +314,8 @@ pub fn expand_home(path: &str, home: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
-    const HOME: &str = "/Users/reader";
-
     fn parse(text: &str) -> Result<Config> {
-        Config::parse(text, Path::new(HOME))
+        Config::parse(text)
     }
 
     #[test]
@@ -330,10 +332,7 @@ mod tests {
         assert_eq!(config.remind.start, Time::constant(9, 0, 0, 0));
         assert_eq!(config.nightly.at, Time::constant(21, 0, 0, 0));
         assert_eq!(config.nightly.email, None);
-        assert_eq!(
-            config.library_dirs,
-            vec![PathBuf::from("/Users/reader/Documents/Books")]
-        );
+        assert_eq!(config.library_dirs, vec!["~/Documents/Books"]);
         assert!(config.goals.is_empty());
     }
 
@@ -360,7 +359,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         // when
-        let config = Config::load(&dir.path().join("config.toml"), Path::new(HOME)).unwrap();
+        let config = Config::load(&dir.path().join("config.toml")).unwrap();
 
         // then
         assert_eq!(config.goals.len(), 4);
@@ -583,11 +582,13 @@ mod tests {
         let text = r#"library_dirs = ["~/Books", "/Volumes/ebooks"]"#;
 
         // when
-        let config = parse(text).unwrap();
+        let dirs = parse(text)
+            .unwrap()
+            .library_paths(Path::new("/Users/reader"));
 
         // then
         assert_eq!(
-            config.library_dirs,
+            dirs,
             vec![
                 PathBuf::from("/Users/reader/Books"),
                 PathBuf::from("/Volumes/ebooks")

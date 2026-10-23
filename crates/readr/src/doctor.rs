@@ -111,7 +111,7 @@ pub fn doctor(app: &App) -> Result<String> {
     }
     let dirs: Vec<String> = app
         .config
-        .library_dirs
+        .library_paths(home)
         .iter()
         .map(|dir| {
             let mark = if dir.is_dir() { "" } else { " (missing)" };

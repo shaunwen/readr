@@ -16,7 +16,7 @@ pub struct App {
 impl App {
     pub fn load() -> Result<Self> {
         let paths = Paths::from_process_env()?;
-        let config = Config::load(&paths.config_file, &paths.home)?;
+        let config = Config::load(&paths.config_file)?;
         let db = Db::open(&paths.db_file)?;
         Ok(Self {
             paths,
