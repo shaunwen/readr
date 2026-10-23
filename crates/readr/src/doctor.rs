@@ -161,7 +161,7 @@ pub fn doctor(app: &App) -> Result<String> {
         ),
     }
 
-    match &app.config.nightly.email {
+    match &app.config.nightly.email() {
         Some(settings) if email::has_password(&settings.smtp_user) => report.ok(
             "email",
             format!(
@@ -175,6 +175,10 @@ pub fn doctor(app: &App) -> Result<String> {
                 "no Keychain password for {}; run `readr email set-password`",
                 settings.smtp_user
             ),
+        ),
+        None if app.config.nightly.email_half_set() => report.warn(
+            "email",
+            "off until both nightly.email_to and nightly.smtp_user are set",
         ),
         None => report.info(
             "email",

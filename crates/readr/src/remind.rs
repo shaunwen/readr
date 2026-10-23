@@ -53,7 +53,7 @@ impl Reminders {
                     self.last_notified_at = Some(std::time::Instant::now());
                     app.db.mark_notified(day, NIGHTLY_NOTICE, now.timestamp())?;
                 }
-                let Some(settings) = &app.config.nightly.email else {
+                let Some(settings) = &app.config.nightly.email() else {
                     app.db.mark_notified(day, &due.kind(), now.timestamp())?;
                     return Ok(());
                 };

@@ -267,7 +267,7 @@ fn shelf_command(app: &App, action: Option<ShelfAction>) -> Result<String> {
 }
 
 fn email_command(app: &App, action: EmailAction) -> Result<String> {
-    let Some(settings) = &app.config.nightly.email else {
+    let Some(settings) = &app.config.nightly.email() else {
         bail!(
             "set nightly.email_to and nightly.smtp_user in {}",
             app.paths.config_file.display()

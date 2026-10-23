@@ -30,7 +30,29 @@ pub struct Remind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Nightly {
     pub at: Time,
-    pub email: Option<Email>,
+    pub email_to: Option<String>,
+    pub email_from: Option<String>,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub smtp_user: Option<String>,
+}
+
+impl Nightly {
+    pub fn email(&self) -> Option<Email> {
+        let to = self.email_to.clone()?;
+        let smtp_user = self.smtp_user.clone()?;
+        Some(Email {
+            to,
+            from: self.email_from.clone().unwrap_or_else(|| smtp_user.clone()),
+            smtp_host: self.smtp_host.clone(),
+            smtp_port: self.smtp_port,
+            smtp_user,
+        })
+    }
+
+    pub fn email_half_set(&self) -> bool {
+        self.email_to.is_some() != self.smtp_user.is_some()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -206,20 +228,6 @@ impl Config {
         if file.tracking.idle_seconds.is_some() {
             bail!("tracking.idle_seconds was replaced by tracking.away_minutes");
         }
-        let email = match (file.nightly.email_to, file.nightly.smtp_user) {
-            (Some(to), Some(smtp_user)) => Some(Email {
-                to,
-                from: file.nightly.email_from.unwrap_or_else(|| smtp_user.clone()),
-                smtp_host: file
-                    .nightly
-                    .smtp_host
-                    .unwrap_or_else(|| "smtp.gmail.com".into()),
-                smtp_port: file.nightly.smtp_port.unwrap_or(587),
-                smtp_user,
-            }),
-            (None, None) => None,
-            _ => bail!("nightly.email_to and nightly.smtp_user must be set together"),
-        };
         let library_dirs = file
             .library_dirs
             .unwrap_or_else(|| vec!["~/Documents/Books".into()]);
@@ -236,7 +244,14 @@ impl Config {
             },
             nightly: Nightly {
                 at: file.nightly.at.unwrap_or(Time::constant(21, 0, 0, 0)),
-                email,
+                email_to: file.nightly.email_to,
+                email_from: file.nightly.email_from,
+                smtp_host: file
+                    .nightly
+                    .smtp_host
+                    .unwrap_or_else(|| "smtp.gmail.com".into()),
+                smtp_port: file.nightly.smtp_port.unwrap_or(587),
+                smtp_user: file.nightly.smtp_user,
             },
             tracking: Tracking {
                 poll_seconds: file.tracking.poll_seconds.unwrap_or(15),
@@ -331,7 +346,7 @@ mod tests {
         assert_eq!(config.remind.interval, SignedDuration::from_hours(2));
         assert_eq!(config.remind.start, Time::constant(9, 0, 0, 0));
         assert_eq!(config.nightly.at, Time::constant(21, 0, 0, 0));
-        assert_eq!(config.nightly.email, None);
+        assert_eq!(config.nightly.email(), None);
         assert_eq!(config.library_dirs, vec!["~/Documents/Books"]);
         assert!(config.goals.is_empty());
     }
@@ -396,7 +411,7 @@ mod tests {
         "#;
 
         // when
-        let email = parse(text).unwrap().nightly.email.unwrap();
+        let email = parse(text).unwrap().nightly.email().unwrap();
 
         // then
         assert_eq!(email.smtp_host, "smtp.gmail.com");
@@ -405,15 +420,16 @@ mod tests {
     }
 
     #[test]
-    fn email_needs_both_recipient_and_smtp_user() {
+    fn email_is_off_until_both_recipient_and_smtp_user_are_set() {
         // given
         let text = "[nightly]\nemail_to = \"me@example.com\"";
 
         // when
-        let error = parse(text).unwrap_err();
+        let nightly = parse(text).unwrap().nightly;
 
         // then
-        assert!(error.to_string().contains("must be set together"));
+        assert_eq!(nightly.email(), None);
+        assert!(nightly.email_half_set());
     }
 
     #[test]
