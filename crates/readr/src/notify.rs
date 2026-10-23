@@ -60,8 +60,10 @@ fn herdr(title: &str, body: &str) -> std::result::Result<(), String> {
 }
 
 fn terminal_notifier(title: &str, body: &str) -> std::result::Result<(), String> {
+    remove_earlier_reminders();
+    let group = format!("{GROUP}-{}", jiff::Timestamp::now().as_millisecond());
     let output = Command::new("terminal-notifier")
-        .args(terminal_notifier_args(title, body))
+        .args(terminal_notifier_args(title, body, &group))
         .output()
         .map_err(|error| match error.kind() {
             std::io::ErrorKind::NotFound => "not installed".to_string(),
@@ -73,7 +75,10 @@ fn terminal_notifier(title: &str, body: &str) -> std::result::Result<(), String>
     Err(failure_text(&output))
 }
 
-fn terminal_notifier_args(title: &str, body: &str) -> Vec<String> {
+// terminal-notifier uses the group as the notification identifier, and macOS
+// silently updates a notification whose identifier was used before, so each
+// reminder gets a fresh group and earlier ones are removed instead.
+fn terminal_notifier_args(title: &str, body: &str, group: &str) -> Vec<String> {
     vec![
         "-title".into(),
         escape_leading(title),
@@ -82,8 +87,30 @@ fn terminal_notifier_args(title: &str, body: &str) -> Vec<String> {
         "-sound".into(),
         SOUND.into(),
         "-group".into(),
-        GROUP.into(),
+        group.into(),
     ]
+}
+
+fn remove_earlier_reminders() {
+    let Ok(output) = Command::new("terminal-notifier")
+        .args(["-list", "ALL"])
+        .output()
+    else {
+        return;
+    };
+    for group in readr_groups(&String::from_utf8_lossy(&output.stdout)) {
+        let _ = Command::new("terminal-notifier")
+            .args(["-remove", &group])
+            .output();
+    }
+}
+
+fn readr_groups(list: &str) -> Vec<String> {
+    list.lines()
+        .filter_map(|line| line.split('\t').next())
+        .filter(|group| *group == GROUP || group.starts_with(&format!("{GROUP}-")))
+        .map(str::to_string)
+        .collect()
 }
 
 fn escape_leading(text: &str) -> String {
@@ -165,12 +192,12 @@ mod tests {
     }
 
     #[test]
-    fn terminal_notifier_gets_sound_and_replaces_the_previous_reminder() {
+    fn terminal_notifier_gets_sound_and_a_fresh_group() {
         // given
         let (title, body) = ("readr: 8 min to go today", "Walden p.9/300 · readr go");
 
         // when
-        let args = terminal_notifier_args(title, body);
+        let args = terminal_notifier_args(title, body, "readr-1700000000000");
 
         // then
         assert_eq!(
@@ -183,9 +210,25 @@ mod tests {
                 "-sound",
                 "Glass",
                 "-group",
-                "readr"
+                "readr-1700000000000"
             ]
         );
+    }
+
+    #[test]
+    fn earlier_readr_reminders_are_found_in_the_delivered_list() {
+        // given
+        let list = "GroupID\tTitle\tSubtitle\tMessage\tDelivered At\n\
+                    readr-1700000000000\treadr: 8 min to go today\t\tWalden\t2026-10-23 04:00:10 +0000\n\
+                    readr\treadr: done\t\tWalden\t2026-10-23 03:00:10 +0000\n\
+                    \therdr\t\tagent done\t2026-10-23 04:01:00 +0000\n\
+                    readrx\tother tool\t\tx\t2026-10-23 04:02:00 +0000\n";
+
+        // when
+        let groups = readr_groups(list);
+
+        // then
+        assert_eq!(groups, ["readr-1700000000000", "readr"]);
     }
 
     #[test]
