@@ -24,6 +24,12 @@ window_focus = true
 [launch]
 terminal = "rio"
 
+[notify]
+# system: macOS Notification Center via terminal-notifier (brew install terminal-notifier),
+#         falling back to osascript, where notifications show as "Script Editor"
+# herdr:  herdr notification, following herdr's own toast setting; falls back to system
+channel = "system"
+
 # folders: folder names under library_dirs whose books are suggested for the goal
 # books_collections: Apple Books collections whose books are suggested for the goal
 

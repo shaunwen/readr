@@ -17,6 +17,7 @@ pub struct Config {
     pub nightly: Nightly,
     pub tracking: Tracking,
     pub launch: Launch,
+    pub notify: Notify,
     pub goals: Vec<Goal>,
 }
 
@@ -63,6 +64,18 @@ pub enum Terminal {
     Herdr,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Notify {
+    pub channel: NotifyChannel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NotifyChannel {
+    System,
+    Herdr,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Goal {
@@ -90,6 +103,8 @@ struct FileConfig {
     tracking: FileTracking,
     #[serde(default)]
     launch: FileLaunch,
+    #[serde(default)]
+    notify: FileNotify,
     goal: Option<Vec<Goal>>,
 }
 
@@ -127,6 +142,12 @@ struct FileTracking {
 #[serde(deny_unknown_fields)]
 struct FileLaunch {
     terminal: Option<Terminal>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileNotify {
+    channel: Option<NotifyChannel>,
 }
 
 impl Config {
@@ -223,6 +244,9 @@ impl Config {
             },
             launch: Launch {
                 terminal: file.launch.terminal.unwrap_or(Terminal::Rio),
+            },
+            notify: Notify {
+                channel: file.notify.channel.unwrap_or(NotifyChannel::System),
             },
             goals: file.goal.unwrap_or_default(),
         })
@@ -515,6 +539,42 @@ mod tests {
                 .to_string()
                 .contains("replaced by tracking.away_minutes")
         );
+    }
+
+    #[test]
+    fn reminders_go_to_the_system_by_default() {
+        // given
+        let text = "";
+
+        // when
+        let notify = parse(text).unwrap().notify;
+
+        // then
+        assert_eq!(notify.channel, NotifyChannel::System);
+    }
+
+    #[test]
+    fn reminders_can_go_through_herdr() {
+        // given
+        let text = "[notify]\nchannel = \"herdr\"";
+
+        // when
+        let notify = parse(text).unwrap().notify;
+
+        // then
+        assert_eq!(notify.channel, NotifyChannel::Herdr);
+    }
+
+    #[test]
+    fn unknown_notify_channels_are_rejected() {
+        // given
+        let text = "[notify]\nchannel = \"slack\"";
+
+        // when
+        let error = parse(text).unwrap_err();
+
+        // then
+        assert!(error.to_string().contains("unknown variant"));
     }
 
     #[test]
