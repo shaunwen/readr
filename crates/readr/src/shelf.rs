@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use jiff::{SignedDuration, Timestamp};
-use readr_core::db::{Book, NewBook, Source};
+use readr_core::db::{Book, Move, NewBook, Source};
 use readr_core::find::{find_books, find_sources, main_title, same_title};
 use readr_core::model::{BookStatus, Position, Reader};
 use readr_core::readers::{Desktop, MacDesktop, file_title};
@@ -71,15 +71,36 @@ pub fn rows(app: &App) -> Result<Vec<ShelfRow>> {
             position,
         });
     }
-    let order = |row: &ShelfRow| {
-        row.book
-            .goal
-            .as_deref()
-            .and_then(|key| app.config.goals.iter().position(|g| g.key == key))
-            .unwrap_or(usize::MAX)
-    };
-    rows.sort_by_key(|row| (order(row), row.book.priority, row.book.id));
+    rows.sort_by_key(|row| (section(row.book.status), row.book.priority, row.book.id));
     Ok(rows)
+}
+
+fn section(status: BookStatus) -> u8 {
+    match status {
+        BookStatus::Active => 0,
+        BookStatus::Queued => 1,
+        BookStatus::Done => 2,
+        BookStatus::Dropped => 3,
+    }
+}
+
+pub fn move_book(app: &App, query: &str, to: Move) -> Result<String> {
+    apply_move(app, &pick_book(app, query)?, to)
+}
+
+pub fn apply_move(app: &App, book: &Book, to: Move) -> Result<String> {
+    let (position, count) = app.db.move_book(book.id, to)?;
+    let section = match book.status {
+        BookStatus::Active => "active books",
+        BookStatus::Queued => "queue",
+        BookStatus::Done => "finished books",
+        BookStatus::Dropped => "dropped books",
+    };
+    Ok(format!(
+        "{} is {} of {count} in the {section}\n",
+        book.title,
+        position + 1
+    ))
 }
 
 pub fn list(app: &App) -> Result<String> {

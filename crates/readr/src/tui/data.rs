@@ -56,11 +56,6 @@ impl Data {
 
         let mut rows = shelf::rows(app)?;
         rows.retain(|row| row.book.status != BookStatus::Dropped);
-        rows.sort_by_key(|row| match row.book.status {
-            BookStatus::Active => 0,
-            BookStatus::Queued => 1,
-            BookStatus::Done | BookStatus::Dropped => 2,
-        });
 
         let source_totals = app.db.source_totals()?;
         let inbox = app

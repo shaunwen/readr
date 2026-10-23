@@ -107,6 +107,14 @@ pub struct Book {
     pub finished_at: Option<Timestamp>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Move {
+    Up,
+    Down,
+    Top,
+    Bottom,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewBook {
     pub title: String,
@@ -200,7 +208,9 @@ impl Db {
 
     pub fn add_book(&self, book: &NewBook, now: Timestamp) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO books (title, author, goal, status, added_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO books (title, author, goal, status, added_at, priority)
+             VALUES (?1, ?2, ?3, ?4, ?5,
+                     (SELECT COALESCE(MAX(priority), 0) + 1 FROM books WHERE status = ?4))",
             params![
                 book.title,
                 book.author,
@@ -236,18 +246,45 @@ impl Db {
     pub fn set_book_status(&self, id: i64, status: BookStatus, now: Timestamp) -> Result<()> {
         let finished_at = (status == BookStatus::Done).then(|| now.to_string());
         self.conn.execute(
-            "UPDATE books SET status = ?2, finished_at = ?3 WHERE id = ?1",
+            "UPDATE books SET status = ?2, finished_at = ?3,
+                priority = CASE WHEN status = ?2 THEN priority
+                    ELSE (SELECT COALESCE(MAX(priority), 0) + 1 FROM books WHERE status = ?2) END
+             WHERE id = ?1",
             params![id, status.as_str(), finished_at],
         )?;
         Ok(())
     }
 
-    pub fn set_book_priority(&self, id: i64, priority: i64) -> Result<()> {
-        self.conn.execute(
-            "UPDATE books SET priority = ?2 WHERE id = ?1",
-            params![id, priority],
-        )?;
-        Ok(())
+    pub fn move_book(&self, id: i64, to: Move) -> Result<(usize, usize)> {
+        let tx = self.conn.unchecked_transaction()?;
+        let status: String = tx
+            .query_row("SELECT status FROM books WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .optional()?
+            .ok_or_else(|| anyhow!("no book {id}"))?;
+        let mut ids: Vec<i64> = tx
+            .prepare("SELECT id FROM books WHERE status = ?1 ORDER BY priority, id")?
+            .query_map([&status], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let from = ids.iter().position(|book| *book == id).unwrap_or(0);
+        let last = ids.len() - 1;
+        let target = match to {
+            Move::Up => from.saturating_sub(1),
+            Move::Down => (from + 1).min(last),
+            Move::Top => 0,
+            Move::Bottom => last,
+        };
+        let book = ids.remove(from);
+        ids.insert(target, book);
+        for (priority, book) in (1_i64..).zip(&ids) {
+            tx.execute(
+                "UPDATE books SET priority = ?2 WHERE id = ?1",
+                params![book, priority],
+            )?;
+        }
+        tx.commit()?;
+        Ok((target, ids.len()))
     }
 
     pub fn set_book_goal(&self, id: i64, goal: Option<&str>, move_history: bool) -> Result<()> {
@@ -1179,6 +1216,98 @@ mod tests {
         // then
         assert_eq!(renamed, 1);
         assert_eq!(db.goals_in_use().unwrap(), vec!["craft".to_string()]);
+    }
+
+    fn titles(db: &Db, status: BookStatus) -> Vec<String> {
+        db.books()
+            .unwrap()
+            .into_iter()
+            .filter(|b| b.status == status)
+            .map(|b| b.title)
+            .collect()
+    }
+
+    fn add(db: &Db, title: &str, status: BookStatus) -> i64 {
+        db.add_book(
+            &NewBook {
+                title: title.into(),
+                author: None,
+                goal: None,
+                status,
+            },
+            now(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn new_books_join_the_end_of_their_section() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        add(&db, "Walden", BookStatus::Queued);
+        add(&db, "Emma", BookStatus::Active);
+
+        // when
+        add(&db, "Ulysses", BookStatus::Queued);
+
+        // then
+        assert_eq!(titles(&db, BookStatus::Queued), ["Walden", "Ulysses"]);
+    }
+
+    #[test]
+    fn moving_a_book_reorders_only_its_section() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        add(&db, "Walden", BookStatus::Queued);
+        add(&db, "Emma", BookStatus::Active);
+        add(&db, "Ulysses", BookStatus::Queued);
+        let dune = add(&db, "Dune", BookStatus::Queued);
+
+        // when
+        let up = db.move_book(dune, Move::Up).unwrap();
+        let top = db.move_book(dune, Move::Top).unwrap();
+
+        // then
+        assert_eq!(up, (1, 3));
+        assert_eq!(top, (0, 3));
+        assert_eq!(
+            titles(&db, BookStatus::Queued),
+            ["Dune", "Walden", "Ulysses"]
+        );
+        assert_eq!(titles(&db, BookStatus::Active), ["Emma"]);
+    }
+
+    #[test]
+    fn moving_past_the_edge_stays_put() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let walden = add(&db, "Walden", BookStatus::Queued);
+        add(&db, "Ulysses", BookStatus::Queued);
+
+        // when
+        let moved = db.move_book(walden, Move::Up).unwrap();
+
+        // then
+        assert_eq!(moved, (0, 2));
+        assert_eq!(titles(&db, BookStatus::Queued), ["Walden", "Ulysses"]);
+    }
+
+    #[test]
+    fn a_book_changing_section_goes_to_the_end() {
+        // given
+        let db = Db::open_in_memory().unwrap();
+        let emma = add(&db, "Emma", BookStatus::Active);
+        add(&db, "Walden", BookStatus::Queued);
+        add(&db, "Ulysses", BookStatus::Queued);
+
+        // when
+        db.set_book_status(emma, BookStatus::Queued, now()).unwrap();
+
+        // then
+        assert_eq!(
+            titles(&db, BookStatus::Queued),
+            ["Walden", "Ulysses", "Emma"]
+        );
     }
 
     #[test]

@@ -128,6 +128,12 @@ enum ShelfAction {
     Activate { book: String },
     /// Move a book to the queue
     Queue { book: String },
+    /// Change a book's place in the active books or the queue
+    Move {
+        book: String,
+        #[arg(value_enum)]
+        to: Direction,
+    },
     /// Change a book's goal
     SetGoal {
         book: String,
@@ -136,6 +142,25 @@ enum ShelfAction {
         #[arg(long)]
         move_history: bool,
     },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Direction {
+    Up,
+    Down,
+    Top,
+    Bottom,
+}
+
+impl From<Direction> for readr_core::db::Move {
+    fn from(direction: Direction) -> Self {
+        match direction {
+            Direction::Up => Self::Up,
+            Direction::Down => Self::Down,
+            Direction::Top => Self::Top,
+            Direction::Bottom => Self::Bottom,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -283,6 +308,7 @@ fn shelf_command(app: &App, action: Option<ShelfAction>) -> Result<String> {
         Some(ShelfAction::Drop { book }) => shelf::set_status(app, &book, BookStatus::Dropped),
         Some(ShelfAction::Activate { book }) => shelf::set_status(app, &book, BookStatus::Active),
         Some(ShelfAction::Queue { book }) => shelf::set_status(app, &book, BookStatus::Queued),
+        Some(ShelfAction::Move { book, to }) => shelf::move_book(app, &book, to.into()),
         Some(ShelfAction::SetGoal {
             book,
             goal,
