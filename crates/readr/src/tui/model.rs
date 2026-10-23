@@ -262,7 +262,7 @@ impl Model {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.quit = true,
             KeyCode::Char('?') => self.mode = Mode::Help,
-            KeyCode::Char('c') => {
+            KeyCode::Char('s') => {
                 self.mode = Mode::Settings {
                     selected: 0,
                     input: None,
@@ -276,7 +276,6 @@ impl Model {
                 self.screen = Screen::ALL[c as usize - '1' as usize];
             }
             KeyCode::Char('t') => self.screen = Screen::Today,
-            KeyCode::Char('s') => self.screen = Screen::Shelf,
             KeyCode::Char('i') if self.screen != Screen::Inbox => self.screen = Screen::Inbox,
             KeyCode::Char('j') | KeyCode::Down => self.move_selection(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_selection(-1),
@@ -538,7 +537,7 @@ impl Model {
             input: None,
         };
         let effect = match (key.code, &row) {
-            (KeyCode::Esc | KeyCode::Char('q' | 'c'), _) => {
+            (KeyCode::Esc | KeyCode::Char('q' | 's'), _) => {
                 next = Mode::Normal;
                 None
             }

@@ -115,7 +115,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, model: &Model) {
                 Screen::Inbox => "Enter add to shelf · n link to a book · i ignore",
             };
             Line::from(format!(
-                " {keys} · Tab screens · c settings · ? help · q quit"
+                " {keys} · Tab screens · s settings · ? help · q quit"
             ))
             .dim()
         }
@@ -606,7 +606,7 @@ fn draw_help(frame: &mut Frame) {
         ("g / G", "set goal / set goal and move past sessions"),
         ("e / x", "edit / delete a finished session"),
         ("n / i", "inbox: link to a book / ignore"),
-        ("c", "settings and goals"),
+        ("s", "settings and goals"),
         ("q / Esc", "quit"),
     ];
     let inner = popup(frame, 62, lines.len() as u16 + 3, "Keys");

@@ -47,7 +47,7 @@ readr config set <key> <value>
 readr config import [file]    # replace them all from a TOML file
 ```
 
-TUI keys: `Tab`/`1-4` screens, `j`/`k` move, `Enter` resume, `a` add, `f` finish, `d` drop, `u` queue or activate, `J`/`K` move a book down or up, `g`/`G` set goal (G also moves past sessions), `e`/`x` edit or delete a finished session, `n`/`i` link or ignore an inbox item, `c` settings, `?` help, `q` quit.
+TUI keys: `Tab`/`1-4` screens, `j`/`k` move, `Enter` resume, `a` add, `f` finish, `d` drop, `u` queue or activate, `J`/`K` move a book down or up, `g`/`G` set goal (G also moves past sessions), `e`/`x` edit or delete a finished session, `n`/`i` link or ignore an inbox item, `s` settings, `?` help, `q` quit.
 
 ## Reminders
 
@@ -68,7 +68,7 @@ readr notify-test
 
 ## Config
 
-Settings and goals live in the database. Change them in the TUI with `c`, or with `readr config set <key> <value>`; the daemon picks changes up on its next poll. The first run imports `~/.config/readr/config.toml` if it exists (otherwise `crates/readr-core/src/default_config.toml`); after that the file is not read again. To edit everything as text, `readr config > file.toml`, edit, then `readr config import file.toml`.
+Settings and goals live in the database. Change them in the TUI with `s`, or with `readr config set <key> <value>`; the daemon picks changes up on its next poll. The first run imports `~/.config/readr/config.toml` if it exists (otherwise `crates/readr-core/src/default_config.toml`); after that the file is not read again. To edit everything as text, `readr config > file.toml`, edit, then `readr config import file.toml`.
 
 In the TUI settings popup, Enter switches a choice or edits a value, Enter on a goal opens its fields, `J`/`K` reorder goals (the first one wins ties for up next), `d` removes a goal once no book on the shelf uses it, and the last row adds one.
 

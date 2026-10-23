@@ -80,7 +80,7 @@ enum Command {
     },
     /// Track a forgotten book again
     Track { book: String },
-    /// Settings and goals, stored in the database (the TUI edits them with c)
+    /// Settings and goals, stored in the database (the TUI edits them with s)
     Config {
         #[command(subcommand)]
         action: Option<ConfigAction>,
@@ -320,7 +320,7 @@ fn shelf_command(app: &App, action: Option<ShelfAction>) -> Result<String> {
 fn email_command(app: &App, action: EmailAction) -> Result<String> {
     let Some(settings) = &app.config.nightly.email() else {
         bail!(
-            "email is off; set it with `readr config set nightly.email_to <address>` and `readr config set nightly.smtp_user <login>`, or press c in the TUI"
+            "email is off; set it with `readr config set nightly.email_to <address>` and `readr config set nightly.smtp_user <login>`, or press s in the TUI"
         );
     };
     match action {

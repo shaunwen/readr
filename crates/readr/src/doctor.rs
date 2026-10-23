@@ -43,7 +43,7 @@ pub fn doctor(app: &App) -> Result<String> {
     report.ok(
         "settings",
         format!(
-            "in the database · {} goals · nightly check {} · change with c in the TUI or `readr config set`",
+            "in the database · {} goals · nightly check {} · change with s in the TUI or `readr config set`",
             app.config.goals.len(),
             app.config.nightly.at.strftime("%H:%M")
         ),
@@ -247,7 +247,7 @@ pub fn init(app: &App) -> Result<String> {
     );
     let _ = writeln!(
         out,
-        "\nnext:\n  1. set goals, reminder times and email: press c in `readr`, or `readr config set <key> <value>`\n  2. readr email set-password      (if you set nightly.email_to)\n  3. readr daemon install\n  4. grant Full Disk Access and Accessibility to {} (open \"{FULL_DISK_ACCESS}\")\n  5. readr shelf add <title> --goal <goal>\n  6. readr doctor",
+        "\nnext:\n  1. set goals, reminder times and email: press s in `readr`, or `readr config set <key> <value>`\n  2. readr email set-password      (if you set nightly.email_to)\n  3. readr daemon install\n  4. grant Full Disk Access and Accessibility to {} (open \"{FULL_DISK_ACCESS}\")\n  5. readr shelf add <title> --goal <goal>\n  6. readr doctor",
         std::env::current_exe()?.display()
     );
     Ok(out)

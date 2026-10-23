@@ -164,7 +164,7 @@ fn config() -> Config {
 }
 
 fn open_settings_at(model: &mut Model, row: &SettingsRow) {
-    press(model, KeyCode::Char('c'));
+    press(model, KeyCode::Char('s'));
     let index = model.settings_rows().iter().position(|r| r == row).unwrap();
     for _ in 0..index {
         press(model, KeyCode::Char('j'));
@@ -452,12 +452,12 @@ fn q_quits() {
 }
 
 #[test]
-fn c_opens_settings_with_every_section_and_the_goals() {
+fn s_opens_settings_with_every_section_and_the_goals() {
     // given
     let mut model = Model::new(data());
 
     // when
-    press(&mut model, KeyCode::Char('c'));
+    press(&mut model, KeyCode::Char('s'));
     let screen = render_sized(&model, 120, 48);
 
     // then
