@@ -6,11 +6,13 @@ use jiff::{SignedDuration, Timestamp};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use readr_core::config::Config;
 use readr_core::db::{Book, Move, SessionView, Source};
 use readr_core::model::{BookStatus, Position, Reader};
+use readr_core::settings::SETTINGS;
 
 use super::data::{Data, GoalWeek, NextView};
-use super::model::{Effect, Mode, Model, Screen};
+use super::model::{Effect, Mode, Model, Screen, SettingsRow};
 use super::view;
 use crate::shelf::ShelfRow;
 
@@ -138,7 +140,39 @@ fn data() -> Data {
             ("health".into(), "Health".into()),
             ("communication".into(), "Communication".into()),
         ],
+        config: config(),
     }
+}
+
+fn config() -> Config {
+    Config::parse(
+        r#"
+        daily_goal_minutes = 20
+
+        [[goal]]
+        key = "health"
+        label = "Health"
+
+        [[goal]]
+        key = "communication"
+        label = "Communication"
+        color = "blue"
+        weekly_minutes = 60
+        "#,
+    )
+    .unwrap()
+}
+
+fn open_settings_at(model: &mut Model, row: &SettingsRow) {
+    press(model, KeyCode::Char('c'));
+    let index = model.settings_rows().iter().position(|r| r == row).unwrap();
+    for _ in 0..index {
+        press(model, KeyCode::Char('j'));
+    }
+}
+
+fn setting_row(key: &str) -> SettingsRow {
+    SettingsRow::Setting(SETTINGS.iter().find(|f| f.key == key).unwrap())
 }
 
 fn press(model: &mut Model, code: KeyCode) -> Option<Effect> {
@@ -146,7 +180,11 @@ fn press(model: &mut Model, code: KeyCode) -> Option<Effect> {
 }
 
 fn render(model: &Model) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
+    render_sized(model, 120, 32)
+}
+
+fn render_sized(model: &Model, width: u16, height: u16) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal.draw(|frame| view::draw(frame, model)).unwrap();
     let buffer = terminal.backend().buffer().clone();
     let mut text = String::new();
@@ -411,4 +449,252 @@ fn q_quits() {
 
     // then
     assert!(model.quit);
+}
+
+#[test]
+fn c_opens_settings_with_every_section_and_the_goals() {
+    // given
+    let mut model = Model::new(data());
+
+    // when
+    press(&mut model, KeyCode::Char('c'));
+    let screen = render_sized(&model, 120, 48);
+
+    // then
+    for text in [
+        "Settings",
+        "Daily goal (min)",
+        "Reminders",
+        "Notify via",
+        "Email",
+        "Tracking",
+        "Goals",
+        "60 min/week",
+        "shares the daily goal",
+        "+ add goal",
+        "Minutes to read each day",
+    ] {
+        assert!(screen.contains(text), "{text} missing\n{screen}");
+    }
+}
+
+#[test]
+fn a_short_terminal_scrolls_settings_to_the_selected_row() {
+    // given
+    let mut model = Model::new(data());
+
+    // when
+    open_settings_at(&mut model, &SettingsRow::AddGoal);
+    let screen = render(&model);
+
+    // then
+    assert!(screen.contains("+ add goal"), "{screen}");
+    assert!(!screen.contains("Daily goal (min)"), "{screen}");
+}
+
+#[test]
+fn enter_on_a_choice_switches_to_the_next_value() {
+    // given
+    let mut model = Model::new(data());
+    open_settings_at(&mut model, &setting_row("notify.channel"));
+
+    // when
+    let effect = press(&mut model, KeyCode::Enter);
+
+    // then
+    assert_eq!(
+        effect,
+        Some(Effect::SetSetting {
+            key: "notify.channel",
+            value: "herdr".into()
+        })
+    );
+    assert!(matches!(model.mode, Mode::Settings { input: None, .. }));
+}
+
+#[test]
+fn enter_on_a_value_edits_it_starting_from_the_current_one() {
+    // given
+    let mut model = Model::new(data());
+    open_settings_at(&mut model, &setting_row("daily_goal_minutes"));
+
+    // when
+    press(&mut model, KeyCode::Enter);
+    let editing = render(&model);
+    press(&mut model, KeyCode::Backspace);
+    press(&mut model, KeyCode::Backspace);
+    press(&mut model, KeyCode::Char('4'));
+    press(&mut model, KeyCode::Char('5'));
+    let effect = press(&mut model, KeyCode::Enter);
+
+    // then
+    assert!(editing.contains("20▏"), "{editing}");
+    assert_eq!(
+        effect,
+        Some(Effect::SetSetting {
+            key: "daily_goal_minutes",
+            value: "45".into()
+        })
+    );
+    assert!(matches!(model.mode, Mode::Settings { input: None, .. }));
+}
+
+#[test]
+fn esc_cancels_an_edit_and_then_closes_settings() {
+    // given
+    let mut model = Model::new(data());
+    open_settings_at(&mut model, &setting_row("nightly.at"));
+    press(&mut model, KeyCode::Enter);
+
+    // when
+    let cancelled = press(&mut model, KeyCode::Esc);
+    let still_open = matches!(model.mode, Mode::Settings { input: None, .. });
+    press(&mut model, KeyCode::Esc);
+
+    // then
+    assert_eq!(cancelled, None);
+    assert!(still_open);
+    assert_eq!(model.mode, Mode::Normal);
+    assert!(!model.quit);
+}
+
+#[test]
+fn a_goal_opens_its_fields_and_esc_returns_to_it() {
+    // given
+    let mut model = Model::new(data());
+    let goal = SettingsRow::Goal("communication".into());
+    open_settings_at(&mut model, &goal);
+
+    // when
+    press(&mut model, KeyCode::Enter);
+    let screen = render(&model);
+    press(&mut model, KeyCode::Char('j'));
+    press(&mut model, KeyCode::Char('j'));
+    press(&mut model, KeyCode::Enter);
+    press(&mut model, KeyCode::Char('0'));
+    let effect = press(&mut model, KeyCode::Enter);
+    press(&mut model, KeyCode::Esc);
+
+    // then
+    assert!(screen.contains("Goal · Communication"), "{screen}");
+    assert_eq!(
+        effect,
+        Some(Effect::SetGoalField {
+            goal: "communication".into(),
+            field: "weekly_minutes",
+            value: "600".into()
+        })
+    );
+    let selected = model.settings_rows().iter().position(|r| *r == goal);
+    assert!(matches!(model.mode, Mode::Settings { selected: s, .. } if Some(s) == selected));
+}
+
+#[test]
+fn renaming_a_goal_key_keeps_editing_the_renamed_goal() {
+    // given
+    let mut model = Model::new(data());
+    open_settings_at(&mut model, &SettingsRow::Goal("health".into()));
+    press(&mut model, KeyCode::Enter);
+    press(&mut model, KeyCode::Char('j'));
+    press(&mut model, KeyCode::Enter);
+    for c in "-body".chars() {
+        press(&mut model, KeyCode::Char(c));
+    }
+
+    // when
+    let effect = press(&mut model, KeyCode::Enter);
+    let mut renamed = data();
+    renamed.config = renamed
+        .config
+        .with_goal_field("health", "key", "health-body")
+        .unwrap();
+    model.replace_data(renamed);
+
+    // then
+    assert_eq!(
+        effect,
+        Some(Effect::SetGoalField {
+            goal: "health".into(),
+            field: "key",
+            value: "health-body".into()
+        })
+    );
+    assert!(matches!(&model.mode, Mode::GoalSettings { key, .. } if key == "health-body"));
+}
+
+#[test]
+fn a_rejected_rename_stays_on_the_old_goal() {
+    // given
+    let mut model = Model::new(data());
+    open_settings_at(&mut model, &SettingsRow::Goal("health".into()));
+    press(&mut model, KeyCode::Enter);
+    press(&mut model, KeyCode::Char('j'));
+    press(&mut model, KeyCode::Enter);
+    press(&mut model, KeyCode::Char('!'));
+    press(&mut model, KeyCode::Enter);
+
+    // when
+    model.replace_data(data());
+
+    // then
+    assert!(matches!(&model.mode, Mode::GoalSettings { key, .. } if key == "health"));
+}
+
+#[test]
+fn shift_j_moves_a_goal_and_the_selection_follows() {
+    // given
+    let mut model = Model::new(data());
+    let health = SettingsRow::Goal("health".into());
+    open_settings_at(&mut model, &health);
+    let before = model
+        .settings_rows()
+        .iter()
+        .position(|r| *r == health)
+        .unwrap();
+
+    // when
+    let effect = press(&mut model, KeyCode::Char('J'));
+
+    // then
+    assert_eq!(
+        effect,
+        Some(Effect::MoveGoal {
+            goal: "health".into(),
+            delta: 1
+        })
+    );
+    assert!(matches!(model.mode, Mode::Settings { selected, .. } if selected == before + 1));
+}
+
+#[test]
+fn removing_a_goal_needs_confirmation() {
+    // given
+    let mut model = Model::new(data());
+    open_settings_at(&mut model, &SettingsRow::Goal("health".into()));
+    press(&mut model, KeyCode::Char('d'));
+
+    // when
+    let screen = render(&model);
+    let effect = press(&mut model, KeyCode::Char('y'));
+
+    // then
+    assert!(screen.contains("Remove Health?"), "{screen}");
+    assert_eq!(effect, Some(Effect::RemoveGoal("health".into())));
+}
+
+#[test]
+fn a_new_goal_is_named_in_place() {
+    // given
+    let mut model = Model::new(data());
+    open_settings_at(&mut model, &SettingsRow::AddGoal);
+
+    // when
+    press(&mut model, KeyCode::Enter);
+    for c in "Horizon".chars() {
+        press(&mut model, KeyCode::Char(c));
+    }
+    let effect = press(&mut model, KeyCode::Enter);
+
+    // then
+    assert_eq!(effect, Some(Effect::AddGoal("Horizon".into())));
 }

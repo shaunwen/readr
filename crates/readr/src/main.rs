@@ -218,10 +218,10 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let app = App::load()?;
+    let mut app = App::load()?;
     let output = match cli.command {
         None if std::io::IsTerminal::is_terminal(&std::io::stdout()) => {
-            tui::run(&app)?;
+            tui::run(&mut app)?;
             String::new()
         }
         None | Some(Command::Status { short: false }) => {

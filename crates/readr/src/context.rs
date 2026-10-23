@@ -33,6 +33,13 @@ impl App {
         })
     }
 
+    pub fn reload_config(&mut self) -> Result<()> {
+        if let Some(config) = self.db.config()? {
+            self.config = config;
+        }
+        Ok(())
+    }
+
     pub fn now(&self) -> Zoned {
         Timestamp::now().to_zoned(self.tz.clone())
     }

@@ -14,7 +14,9 @@ use readr_core::model::{BookStatus, Position};
 use readr_core::stats::{format_minutes, minutes};
 
 use super::data::{Data, HEATMAP_WEEKS};
-use super::model::{Mode, Model, Screen};
+use readr_core::settings::{Field, GOAL_FIELDS, Kind};
+
+use super::model::{Mode, Model, Screen, SettingsRow};
 
 const ACCENT: Color = Color::Cyan;
 
@@ -52,6 +54,21 @@ pub fn draw(frame: &mut Frame, model: &Model) {
             "Delete session",
             "Delete this session?",
             "y delete · any other key cancels",
+        ),
+        Mode::Settings { selected, input } => {
+            draw_settings(frame, model, *selected, input.as_deref())
+        }
+        Mode::GoalSettings {
+            key,
+            selected,
+            input,
+            ..
+        } => draw_goal_settings(frame, model, key, *selected, input.as_deref()),
+        Mode::ConfirmRemoveGoal { key, .. } => draw_prompt(
+            frame,
+            "Remove goal",
+            &format!("Remove {}?", goal_label(model, key)),
+            "y remove · any other key cancels",
         ),
     }
 }
@@ -97,7 +114,10 @@ fn draw_footer(frame: &mut Frame, area: Rect, model: &Model) {
                 Screen::Stats => "",
                 Screen::Inbox => "Enter add to shelf · n link to a book · i ignore",
             };
-            Line::from(format!(" {keys} · Tab screens · ? help · q quit")).dim()
+            Line::from(format!(
+                " {keys} · Tab screens · c settings · ? help · q quit"
+            ))
+            .dim()
         }
     };
     frame.render_widget(line, area);
@@ -586,6 +606,7 @@ fn draw_help(frame: &mut Frame) {
         ("g / G", "set goal / set goal and move past sessions"),
         ("e / x", "edit / delete a finished session"),
         ("n / i", "inbox: link to a book / ignore"),
+        ("c", "settings and goals"),
         ("q / Esc", "quit"),
     ];
     let inner = popup(frame, 62, lines.len() as u16 + 3, "Keys");
@@ -600,6 +621,168 @@ fn draw_help(frame: &mut Frame) {
         .chain([Line::from("press any key").dim()])
         .collect();
     frame.render_widget(Paragraph::new(text), inner);
+}
+
+const LABEL_WIDTH: usize = 26;
+
+fn draw_settings(frame: &mut Frame, model: &Model, selected: usize, input: Option<&str>) {
+    let rows = model.settings_rows();
+    let mut items = Vec::new();
+    let mut selected_item = 0;
+    let mut section = "";
+    for (index, row) in rows.iter().enumerate() {
+        let row_section = match row {
+            SettingsRow::Setting(field) => field.section,
+            SettingsRow::Goal(_) | SettingsRow::AddGoal => "Goals",
+        };
+        if row_section != section {
+            section = row_section;
+            items.push(ListItem::new(Line::from(section).fg(ACCENT).bold()));
+        }
+        let editing = input.filter(|_| index == selected);
+        if index == selected {
+            selected_item = items.len();
+        }
+        let line = match row {
+            SettingsRow::Setting(field) => {
+                let value = model.data.config.get(field.key).unwrap_or_default();
+                field_line(field, &value, editing)
+            }
+            SettingsRow::Goal(key) => goal_line(model, key),
+            SettingsRow::AddGoal => match editing {
+                Some(text) => Line::from(vec![
+                    TextSpan::from(format!("  {:<LABEL_WIDTH$}", "new goal name")),
+                    TextSpan::from(format!("{text}▏")).fg(ACCENT),
+                ]),
+                None => Line::from("  + add goal").dim(),
+            },
+        };
+        items.push(ListItem::new(line));
+    }
+    let help = match rows.get(selected) {
+        Some(SettingsRow::Setting(field)) => field.help.to_string(),
+        Some(SettingsRow::Goal(_)) => {
+            "Enter edit · J/K reorder (first wins ties for up next) · d remove".into()
+        }
+        _ => "Enter, type a name, Enter".into(),
+    };
+    let hint = if input.is_some() {
+        "Enter save · Esc cancel"
+    } else {
+        "Enter edit or toggle · j/k move · Esc close"
+    };
+    draw_settings_list(frame, "Settings", items, selected_item, &help, hint);
+}
+
+fn draw_goal_settings(
+    frame: &mut Frame,
+    model: &Model,
+    key: &str,
+    selected: usize,
+    input: Option<&str>,
+) {
+    let Some(goal) = model.data.config.goal(key) else {
+        return;
+    };
+    let items: Vec<ListItem> = GOAL_FIELDS
+        .iter()
+        .enumerate()
+        .map(|(index, field)| {
+            let editing = input.filter(|_| index == selected);
+            ListItem::new(field_line(field, &goal.get(field.key), editing))
+        })
+        .collect();
+    let help = GOAL_FIELDS
+        .get(selected)
+        .map(|field| field.help)
+        .unwrap_or_default();
+    let hint = if input.is_some() {
+        "Enter save · Esc cancel"
+    } else {
+        "Enter edit or toggle · j/k move · Esc back"
+    };
+    draw_settings_list(
+        frame,
+        &format!("Goal · {}", goal.label),
+        items,
+        selected,
+        help,
+        hint,
+    );
+}
+
+fn draw_settings_list(
+    frame: &mut Frame,
+    title: &str,
+    items: Vec<ListItem>,
+    selected: usize,
+    help: &str,
+    hint: &str,
+) {
+    let height = (items.len() as u16 + 5).min(frame.area().height.saturating_sub(2));
+    let inner = popup(frame, 96, height, title);
+    let [list, help_area, hint_area] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(2),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    let mut state = ListState::default().with_selected(Some(selected));
+    frame.render_stateful_widget(
+        List::new(items).highlight_style(Style::new().reversed()),
+        list,
+        &mut state,
+    );
+    frame.render_widget(
+        Paragraph::new(help.to_string())
+            .wrap(ratatui::widgets::Wrap { trim: true })
+            .italic(),
+        help_area,
+    );
+    frame.render_widget(Line::from(hint.to_string()).dim(), hint_area);
+}
+
+fn field_line(field: &Field, value: &str, editing: Option<&str>) -> Line<'static> {
+    let label = TextSpan::from(format!("  {:<LABEL_WIDTH$}", field.label));
+    let value = match editing {
+        Some(text) => TextSpan::from(format!("{text}▏")).fg(ACCENT),
+        None if value.is_empty() => TextSpan::from("-").dim(),
+        None if field.kind == Kind::Bool => {
+            TextSpan::from(if value == "true" { "on" } else { "off" })
+        }
+        None if field.key == "color" => TextSpan::from(value.to_string()).fg(parse_color(value)),
+        None => TextSpan::from(value.to_string()),
+    };
+    let toggle = match (editing, field.kind.choices()) {
+        (None, Some(_)) => TextSpan::from("  ⇄").dim(),
+        _ => TextSpan::from(""),
+    };
+    Line::from(vec![label, value, toggle])
+}
+
+fn goal_line(model: &Model, key: &str) -> Line<'static> {
+    let Some(goal) = model.data.config.goal(key) else {
+        return Line::from(format!("  {key}"));
+    };
+    let color = goal.color.as_deref().map(parse_color).unwrap_or(ACCENT);
+    let target = goal
+        .weekly_minutes
+        .map(|m| format!("{m} min/week"))
+        .unwrap_or_else(|| "shares the daily goal".into());
+    Line::from(vec![
+        TextSpan::from(format!("  {:<LABEL_WIDTH$}", goal.label)).fg(color),
+        TextSpan::from(target),
+        TextSpan::from(format!("  {key}")).dim(),
+    ])
+}
+
+fn goal_label(model: &Model, key: &str) -> String {
+    model
+        .data
+        .config
+        .goal(key)
+        .map(|g| g.label.clone())
+        .unwrap_or_else(|| key.to_string())
 }
 
 fn parse_color(name: &str) -> Color {

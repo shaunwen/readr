@@ -2,6 +2,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use readr_core::db::{Move, Source};
 use readr_core::find::matches;
 use readr_core::model::BookStatus;
+use readr_core::settings::{Field, GOAL_FIELDS, SETTINGS};
 
 use super::data::Data;
 
@@ -53,6 +54,27 @@ pub enum Mode {
     ConfirmDelete {
         session_id: i64,
     },
+    Settings {
+        selected: usize,
+        input: Option<String>,
+    },
+    GoalSettings {
+        key: String,
+        selected: usize,
+        input: Option<String>,
+        renamed_from: Option<String>,
+    },
+    ConfirmRemoveGoal {
+        key: String,
+        selected: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingsRow {
+    Setting(&'static Field),
+    Goal(String),
+    AddGoal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +98,21 @@ pub enum Effect {
         minutes: i64,
     },
     DeleteSession(i64),
+    SetSetting {
+        key: &'static str,
+        value: String,
+    },
+    SetGoalField {
+        goal: String,
+        field: &'static str,
+        value: String,
+    },
+    AddGoal(String),
+    RemoveGoal(String),
+    MoveGoal {
+        goal: String,
+        delta: isize,
+    },
 }
 
 pub struct Model {
@@ -108,6 +145,41 @@ impl Model {
         self.today_selected = clamp(self.today_selected, self.data.sessions.len());
         self.shelf_selected = clamp(self.shelf_selected, self.data.shelf.len());
         self.inbox_selected = clamp(self.inbox_selected, self.data.inbox.len());
+        let rows = self.settings_rows().len();
+        match &mut self.mode {
+            Mode::Settings { selected, .. } => *selected = clamp(*selected, rows),
+            Mode::GoalSettings {
+                key, renamed_from, ..
+            } => {
+                if let Some(old) = renamed_from.take()
+                    && self.data.config.goal(key).is_none()
+                {
+                    *key = old;
+                }
+                if self.data.config.goal(key).is_none() {
+                    self.mode = Mode::Settings {
+                        selected: SETTINGS.len(),
+                        input: None,
+                    };
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn settings_rows(&self) -> Vec<SettingsRow> {
+        SETTINGS
+            .iter()
+            .map(SettingsRow::Setting)
+            .chain(
+                self.data
+                    .config
+                    .goals
+                    .iter()
+                    .map(|goal| SettingsRow::Goal(goal.key.clone())),
+            )
+            .chain([SettingsRow::AddGoal])
+            .collect()
     }
 
     pub fn add_matches(&self, query: &str) -> Vec<&Source> {
@@ -165,6 +237,23 @@ impl Model {
                 KeyCode::Char('y') => Some(Effect::DeleteSession(session_id)),
                 _ => None,
             },
+            Mode::Settings { selected, input } => self.settings(key, selected, input),
+            Mode::GoalSettings {
+                key: goal,
+                selected,
+                input,
+                ..
+            } => self.goal_settings(key, goal, selected, input),
+            Mode::ConfirmRemoveGoal {
+                key: goal,
+                selected,
+            } => {
+                self.mode = Mode::Settings {
+                    selected,
+                    input: None,
+                };
+                (key.code == KeyCode::Char('y')).then_some(Effect::RemoveGoal(goal))
+            }
         }
     }
 
@@ -173,6 +262,12 @@ impl Model {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.quit = true,
             KeyCode::Char('?') => self.mode = Mode::Help,
+            KeyCode::Char('c') => {
+                self.mode = Mode::Settings {
+                    selected: 0,
+                    input: None,
+                }
+            }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => self.screen = self.screen.next(),
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
                 self.screen = self.screen.previous()
@@ -413,6 +508,222 @@ impl Model {
         self.mode = Mode::EditMinutes { session_id, input };
         None
     }
+
+    fn settings(
+        &mut self,
+        key: KeyEvent,
+        selected: usize,
+        input: Option<String>,
+    ) -> Option<Effect> {
+        let rows = self.settings_rows();
+        let row = rows.get(selected).cloned().unwrap_or(SettingsRow::AddGoal);
+        if let Some(input) = input {
+            let (input, submitted) = match edit_text(key, input) {
+                Edit::Typing(text) => (Some(text), None),
+                Edit::Submit(text) => (None, Some(text)),
+                Edit::Cancel => (None, None),
+            };
+            self.mode = Mode::Settings { selected, input };
+            return submitted.and_then(|value| match row {
+                SettingsRow::Setting(field) => Some(Effect::SetSetting {
+                    key: field.key,
+                    value,
+                }),
+                SettingsRow::AddGoal => Some(Effect::AddGoal(value)),
+                SettingsRow::Goal(_) => None,
+            });
+        }
+        let mut next = Mode::Settings {
+            selected,
+            input: None,
+        };
+        let effect = match (key.code, &row) {
+            (KeyCode::Esc | KeyCode::Char('q' | 'c'), _) => {
+                next = Mode::Normal;
+                None
+            }
+            (KeyCode::Char('j') | KeyCode::Down, _) => {
+                next = Mode::Settings {
+                    selected: step(selected, 1, rows.len()),
+                    input: None,
+                };
+                None
+            }
+            (KeyCode::Char('k') | KeyCode::Up, _) => {
+                next = Mode::Settings {
+                    selected: step(selected, -1, rows.len()),
+                    input: None,
+                };
+                None
+            }
+            (KeyCode::Enter | KeyCode::Char(' '), SettingsRow::Setting(field)) => {
+                let current = self.data.config.get(field.key).unwrap_or_default();
+                match field.kind.choices() {
+                    Some(choices) => Some(Effect::SetSetting {
+                        key: field.key,
+                        value: next_choice(choices, &current),
+                    }),
+                    None => {
+                        next = Mode::Settings {
+                            selected,
+                            input: Some(current),
+                        };
+                        None
+                    }
+                }
+            }
+            (KeyCode::Enter, SettingsRow::Goal(goal)) => {
+                next = Mode::GoalSettings {
+                    key: goal.clone(),
+                    selected: 0,
+                    input: None,
+                    renamed_from: None,
+                };
+                None
+            }
+            (KeyCode::Enter | KeyCode::Char('a'), SettingsRow::AddGoal) => {
+                next = Mode::Settings {
+                    selected,
+                    input: Some(String::new()),
+                };
+                None
+            }
+            (KeyCode::Char(c @ ('J' | 'K')), SettingsRow::Goal(goal)) => {
+                let delta = if c == 'J' { 1 } else { -1 };
+                let target = step(selected, delta, rows.len());
+                if matches!(rows[target], SettingsRow::Goal(_)) {
+                    next = Mode::Settings {
+                        selected: target,
+                        input: None,
+                    };
+                }
+                Some(Effect::MoveGoal {
+                    goal: goal.clone(),
+                    delta,
+                })
+            }
+            (KeyCode::Char('d'), SettingsRow::Goal(goal)) => {
+                next = Mode::ConfirmRemoveGoal {
+                    key: goal.clone(),
+                    selected,
+                };
+                None
+            }
+            _ => None,
+        };
+        self.mode = next;
+        effect
+    }
+
+    fn goal_settings(
+        &mut self,
+        key: KeyEvent,
+        goal: String,
+        selected: usize,
+        input: Option<String>,
+    ) -> Option<Effect> {
+        let field = &GOAL_FIELDS[selected.min(GOAL_FIELDS.len() - 1)];
+        if let Some(input) = input {
+            let (input, submitted) = match edit_text(key, input) {
+                Edit::Typing(text) => (Some(text), None),
+                Edit::Submit(text) => (None, Some(text)),
+                Edit::Cancel => (None, None),
+            };
+            let renamed = submitted
+                .as_ref()
+                .filter(|_| field.key == "key")
+                .map(|value| value.trim().to_string());
+            self.mode = Mode::GoalSettings {
+                key: renamed.clone().unwrap_or_else(|| goal.clone()),
+                selected,
+                input,
+                renamed_from: renamed.map(|_| goal.clone()),
+            };
+            return submitted.map(|value| Effect::SetGoalField {
+                goal,
+                field: field.key,
+                value,
+            });
+        }
+        let current = self
+            .data
+            .config
+            .goal(&goal)
+            .map(|g| g.get(field.key))
+            .unwrap_or_default();
+        let position = self
+            .data
+            .config
+            .goals
+            .iter()
+            .position(|g| g.key == goal)
+            .unwrap_or(0);
+        let mut next_selected = selected;
+        let mut next_input = None;
+        let effect = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Settings {
+                    selected: SETTINGS.len() + position,
+                    input: None,
+                };
+                return None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                next_selected = step(selected, 1, GOAL_FIELDS.len());
+                None
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                next_selected = step(selected, -1, GOAL_FIELDS.len());
+                None
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => match field.kind.choices() {
+                Some(choices) => Some(Effect::SetGoalField {
+                    goal: goal.clone(),
+                    field: field.key,
+                    value: next_choice(choices, &current),
+                }),
+                None => {
+                    next_input = Some(current);
+                    None
+                }
+            },
+            _ => None,
+        };
+        self.mode = Mode::GoalSettings {
+            key: goal,
+            selected: next_selected,
+            input: next_input,
+            renamed_from: None,
+        };
+        effect
+    }
+}
+
+enum Edit {
+    Typing(String),
+    Submit(String),
+    Cancel,
+}
+
+fn edit_text(key: KeyEvent, mut input: String) -> Edit {
+    match key.code {
+        KeyCode::Esc => return Edit::Cancel,
+        KeyCode::Enter => return Edit::Submit(input),
+        KeyCode::Backspace => {
+            input.pop();
+        }
+        KeyCode::Char(c) => input.push(c),
+        _ => {}
+    }
+    Edit::Typing(input)
+}
+
+fn next_choice(choices: &[&str], current: &str) -> String {
+    let next = choices
+        .iter()
+        .position(|choice| *choice == current)
+        .map_or(0, |index| (index + 1) % choices.len());
+    choices[next].to_string()
 }
 
 fn step(selected: usize, delta: isize, len: usize) -> usize {

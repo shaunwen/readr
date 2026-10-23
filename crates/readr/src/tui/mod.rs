@@ -9,14 +9,14 @@ use jiff::SignedDuration;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
 use crate::context::App;
-use crate::{commands, shelf};
+use crate::{commands, settings, shelf};
 
 use self::data::Data;
 use self::model::{Effect, Model};
 
 const REFRESH: Duration = Duration::from_secs(5);
 
-pub fn run(app: &App) -> Result<()> {
+pub fn run(app: &mut App) -> Result<()> {
     let mut model = Model::new(Data::load(app)?);
     let mut terminal = ratatui::init();
     let result = event_loop(app, &mut terminal, &mut model);
@@ -24,7 +24,11 @@ pub fn run(app: &App) -> Result<()> {
     result
 }
 
-fn event_loop(app: &App, terminal: &mut ratatui::DefaultTerminal, model: &mut Model) -> Result<()> {
+fn event_loop(
+    app: &mut App,
+    terminal: &mut ratatui::DefaultTerminal,
+    model: &mut Model,
+) -> Result<()> {
     let mut loaded_at = Instant::now();
     while !model.quit {
         terminal.draw(|frame| view::draw(frame, model))?;
@@ -33,7 +37,9 @@ fn event_loop(app: &App, terminal: &mut ratatui::DefaultTerminal, model: &mut Mo
                 && key.kind == KeyEventKind::Press
                 && let Some(effect) = model.update(key)
             {
-                model.message = Some(execute(app, effect));
+                let message = execute(app, effect);
+                model.message = (!message.is_empty()).then_some(message);
+                app.reload_config()?;
                 model.replace_data(Data::load(app)?);
                 loaded_at = Instant::now();
             }
@@ -102,6 +108,13 @@ fn execute(app: &App, effect: Effect) -> String {
             .db
             .delete_session(session_id)
             .map(|()| "session deleted".to_string()),
+        Effect::SetSetting { key, value } => settings::set(app, key, &value),
+        Effect::SetGoalField { goal, field, value } => {
+            settings::set_goal_field(app, &goal, field, &value)
+        }
+        Effect::AddGoal(label) => settings::add_goal(app, &label),
+        Effect::RemoveGoal(goal) => settings::remove_goal(app, &goal),
+        Effect::MoveGoal { goal, delta } => settings::move_goal(app, &goal, delta),
     };
     let text = match result {
         Ok(message) => message,

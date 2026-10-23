@@ -4,6 +4,7 @@ use anyhow::Result;
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
 use jiff::{SignedDuration, Span};
+use readr_core::config::Config;
 use readr_core::db::{SessionView, Source};
 use readr_core::model::{BookStatus, Reader};
 use readr_core::stats::{best_streak, streak};
@@ -43,6 +44,7 @@ pub struct Data {
     pub heat: BTreeMap<Date, SignedDuration>,
     pub week_goals: Vec<GoalWeek>,
     pub goals: Vec<(String, String)>,
+    pub config: Config,
 }
 
 impl Data {
@@ -116,6 +118,7 @@ impl Data {
                 .iter()
                 .map(|g| (g.key.clone(), g.label.clone()))
                 .collect(),
+            config: app.config.clone(),
         })
     }
 
