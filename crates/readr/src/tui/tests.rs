@@ -6,7 +6,7 @@ use jiff::{SignedDuration, Timestamp};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
-use readr_core::db::{Book, SessionView, Source};
+use readr_core::db::{Book, Move, SessionView, Source};
 use readr_core::model::{BookStatus, Position, Reader};
 
 use super::data::{Data, GoalWeek, NextView};
@@ -85,6 +85,15 @@ fn data() -> Data {
         ShelfRow {
             book: book(2, "Ulysses", "communication", BookStatus::Queued),
             goal_label: "Communication".into(),
+            source: None,
+            position: None,
+            read: 0.0,
+            time: SignedDuration::ZERO,
+            last_read: None,
+        },
+        ShelfRow {
+            book: book(3, "Dune", "health", BookStatus::Queued),
+            goal_label: "Health".into(),
             source: None,
             position: None,
             read: 0.0,
@@ -215,6 +224,39 @@ fn shelf_keys_finish_queue_and_resume_the_selected_book() {
     assert_eq!(resume, Some(Effect::Resume(1)));
     assert_eq!(finish, Some(Effect::SetStatus(1, BookStatus::Done)));
     assert_eq!(activate, Some(Effect::SetStatus(2, BookStatus::Active)));
+}
+
+#[test]
+fn shift_j_and_k_move_the_book_and_the_selection_follows_it() {
+    // given
+    let mut model = Model::new(data());
+    press(&mut model, KeyCode::Char('2'));
+    press(&mut model, KeyCode::Char('j'));
+
+    // when
+    let down = press(&mut model, KeyCode::Char('J'));
+    let selected_after_down = model.shelf_selected;
+    let up = press(&mut model, KeyCode::Char('K'));
+
+    // then
+    assert_eq!(down, Some(Effect::MoveBook(2, Move::Down)));
+    assert_eq!(selected_after_down, 2);
+    assert_eq!(up, Some(Effect::MoveBook(3, Move::Up)));
+}
+
+#[test]
+fn moving_stops_at_the_edge_of_the_section() {
+    // given
+    let mut model = Model::new(data());
+    press(&mut model, KeyCode::Char('2'));
+    press(&mut model, KeyCode::Char('j'));
+
+    // when
+    let effect = press(&mut model, KeyCode::Char('K'));
+
+    // then
+    assert_eq!(effect, Some(Effect::MoveBook(2, Move::Up)));
+    assert_eq!(model.shelf_selected, 1);
 }
 
 #[test]

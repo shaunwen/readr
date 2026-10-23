@@ -1,5 +1,5 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use readr_core::db::Source;
+use readr_core::db::{Move, Source};
 use readr_core::find::matches;
 use readr_core::model::BookStatus;
 
@@ -59,6 +59,7 @@ pub enum Mode {
 pub enum Effect {
     Resume(i64),
     SetStatus(i64, BookStatus),
+    MoveBook(i64, Move),
     SetGoal {
         book_id: i64,
         goal: Option<String>,
@@ -231,6 +232,8 @@ impl Model {
                             BookStatus::Active
                         },
                     )),
+                    KeyCode::Char('J') => Some(self.move_book(1)),
+                    KeyCode::Char('K') => Some(self.move_book(-1)),
                     KeyCode::Char(c @ ('g' | 'G')) => {
                         let current = row.book.goal.clone();
                         let selected = self
@@ -270,6 +273,16 @@ impl Model {
             }
             Screen::Stats => None,
         }
+    }
+
+    fn move_book(&mut self, delta: isize) -> Effect {
+        let row = &self.data.shelf[self.shelf_selected];
+        let effect = Effect::MoveBook(row.book.id, if delta < 0 { Move::Up } else { Move::Down });
+        let target = step(self.shelf_selected, delta, self.data.shelf.len());
+        if self.data.shelf[target].book.status == row.book.status {
+            self.shelf_selected = target;
+        }
+        effect
     }
 
     fn selected_finished_session(&mut self) -> Option<(i64, i64)> {

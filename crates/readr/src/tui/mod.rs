@@ -53,6 +53,9 @@ fn execute(app: &App, effect: Effect) -> String {
         Effect::SetStatus(book_id, status) => {
             book(app, book_id).and_then(|book| shelf::apply_status(app, &book, status))
         }
+        Effect::MoveBook(book_id, to) => {
+            book(app, book_id).and_then(|book| shelf::apply_move(app, &book, to))
+        }
         Effect::SetGoal {
             book_id,
             goal,

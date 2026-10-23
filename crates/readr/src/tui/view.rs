@@ -92,7 +92,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, model: &Model) {
             let keys = match model.screen {
                 Screen::Today => "Enter resume up next · j/k select · e edit · x delete",
                 Screen::Shelf => {
-                    "Enter resume · a add · f finish · d drop · u queue/activate · g goal · G goal+history"
+                    "Enter resume · a add · f finish · d drop · u queue/activate · J/K move · g goal"
                 }
                 Screen::Stats => "",
                 Screen::Inbox => "Enter add to shelf · n link to a book · i ignore",
@@ -582,6 +582,7 @@ fn draw_help(frame: &mut Frame) {
         ("a", "add a book to the shelf"),
         ("f / d", "finish / drop book"),
         ("u", "queue or activate book"),
+        ("J / K", "move book down / up in its section"),
         ("g / G", "set goal / set goal and move past sessions"),
         ("e / x", "edit / delete a finished session"),
         ("n / i", "inbox: link to a book / ignore"),
