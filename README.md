@@ -8,7 +8,7 @@ You keep reading in your usual readers. A background daemon notices page turns a
 
 ```bash
 make install            # lint + tests + release build, copies to ~/workspace/bin/readr
-readr init              # writes ~/.config/readr/config.toml
+readr init              # creates the database with the default goals
 readr daemon install    # launchd agent com.shaunwen.readr, starts at login
 readr doctor            # checks config, readers, permissions, daemon, email
 ```
@@ -29,9 +29,10 @@ readr                         # TUI: Today, Shelf, Stats, Inbox
 readr go [book]               # open the suggested book, or the one named, at its saved place
 readr status                  # Today 12/20 min · streak 6, sessions, up next
 readr status --short          # 12/20m, for a zsh RPROMPT
-readr shelf                   # active books by goal, queue, finished count
+readr shelf                   # active books, queue, finished count, in your order
 readr shelf add <title|path> [--goal health] [--queue]
 readr shelf finish|drop|activate|queue <book>
+readr shelf move <book> up|down|top|bottom
 readr shelf set-goal <book> <goal|none> [--move-history]
 readr log 25m "Atomic Habits" # reading away from the Mac
 readr inbox                   # reading in books not on the shelf
@@ -41,9 +42,12 @@ readr forget <book> [--keep-history] [--yes]   # stop tracking a book and delete
 readr forget --list           # books readr no longer tracks
 readr track <book>            # track a forgotten book again
 readr goal rename <old> <new>
+readr config                  # every setting and goal, as TOML
+readr config set <key> <value>
+readr config import [file]    # replace them all from a TOML file
 ```
 
-TUI keys: `Tab`/`1-4` screens, `j`/`k` move, `Enter` resume, `a` add, `f` finish, `d` drop, `u` queue or activate, `g`/`G` set goal (G also moves past sessions), `e`/`x` edit or delete a finished session, `n`/`i` link or ignore an inbox item, `?` help, `q` quit.
+TUI keys: `Tab`/`1-4` screens, `j`/`k` move, `Enter` resume, `a` add, `f` finish, `d` drop, `u` queue or activate, `J`/`K` move a book down or up, `g`/`G` set goal (G also moves past sessions), `e`/`x` edit or delete a finished session, `n`/`i` link or ignore an inbox item, `c` settings, `?` help, `q` quit.
 
 ## Reminders
 
@@ -54,7 +58,7 @@ TUI keys: `Tab`/`1-4` screens, `j`/`k` move, `Enter` resume, `a` add, `f` finish
 - Once the goal is reached: one "done for today" notice, then nothing more that day.
 - At `nightly.at` (default 21:00), if today is under the goal: a notification and an email. A check missed while the Mac slept runs on wake, the same day only. Each reminder is sent at most once.
 
-Email is sent over SMTP with STARTTLS. Set `nightly.email_to` and `nightly.smtp_user` in the config, then store the password (for Gmail, an app password) in the Keychain:
+Email is sent over SMTP with STARTTLS. Set `nightly.email_to` and `nightly.smtp_user` (settings popup or `readr config set`), then store the password (for Gmail, an app password) in the Keychain:
 
 ```bash
 readr email set-password      # Keychain item "readr-smtp"
@@ -64,7 +68,9 @@ readr notify-test
 
 ## Config
 
-`~/.config/readr/config.toml`, reloaded by the daemon when it changes. An invalid file is reported in the log and the last good config stays in use. See `crates/readr-core/src/default_config.toml` for every key:
+Settings and goals live in the database. Change them in the TUI with `c`, or with `readr config set <key> <value>`; the daemon picks changes up on its next poll. The first run imports `~/.config/readr/config.toml` if it exists (otherwise `crates/readr-core/src/default_config.toml`); after that the file is not read again. To edit everything as text, `readr config > file.toml`, edit, then `readr config import file.toml`.
+
+In the TUI settings popup, Enter switches a choice or edits a value, Enter on a goal opens its fields, `J`/`K` reorder goals (the first one wins ties for up next), `d` removes a goal once no book on the shelf uses it, and the last row adds one.
 
 - `daily_goal_minutes`
 - `count_off_shelf`: whether reading outside the shelf counts toward the goal

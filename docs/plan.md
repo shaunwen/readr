@@ -32,7 +32,7 @@ launchd
 
 readr              (ratatui TUI + CLI)
 ~/.local/share/readr/readr.db
-~/.config/readr/config.toml   (hot-reloaded by the daemon)
+~/.config/readr/config.toml   (imported into the database on first run)
 ```
 Cargo workspace:
 - `readr-core`: database, session rules, config and goals; shared so the daemon and TUI never disagree on "is today done".
