@@ -131,7 +131,7 @@ Invalid config: the daemon keeps the last good settings and shows the error as a
 | move a book | asks whether past sessions move too (sessions snapshot their goal) |
 
 ## Reminders
-- Every 2h while today is under 20 min: `herdr notification show "8 min to go" --body "Walden p.4 · readr go" --sound request`; macOS notification via `osascript` if herdr isn't running. One "done for today" message, then silence.
+- Every 2h while today is under the goal: a notification such as "8 min to go" / "Walden p.4 · readr go", sent through `notify.channel` (see Implementation decisions). One "done for today" message, then silence.
 - Nightly at `nightly.at`: email with today's minutes, streak at risk, and the book and page to resume. Sent with `lettre` over SMTP. A check missed during sleep runs on wake, same day only; `notifications` prevents duplicates.
 
 ## How I interact with it
@@ -211,7 +211,7 @@ Crates: `ratatui`, `crossterm`, `tui-input` (text fields), `rusqlite` (bundled),
 - The Stats heatmap is drawn directly with ratatui spans instead of the `calendar::Monthly` widget, which would need the `time` crate next to `jiff`.
 - The SMTP password is stored with the macOS `security` CLI (Keychain item `readr-smtp`) instead of the `keyring` crate. That means no extra dependency, and the item is visible in Keychain Access.
 - Text input in the TUI (search, minutes) is a plain string buffer; `tui-input` was not needed.
-- Reminders go to herdr first and fall back to a macOS notification. herdr's response is checked for `"shown":true` because a rate-limited notification still exits 0. herdr finds its socket through `XDG_CONFIG_HOME`, so the daemon must see the same value as your shell (`readr daemon install` copies it into the launchd plist).
+- Reminders go to macOS Notification Center through `terminal-notifier` by default (`notify.channel = "system"`), falling back to `osascript`. herdr is optional (`notify.channel = "herdr"`): with herdr's "inside herdr" delivery, a toast in a window that isn't in front still reports `"shown":true`, so reminders could be missed while reading in another app, and with "via system" herdr only forwarded to terminal-notifier anyway. When herdr is used, its response is checked for `"shown":true` because a rate-limited notification still exits 0, and herdr finds its socket through `XDG_CONFIG_HOME`, so the daemon gets the same value as the shell.
 - Verified in bookokrat's source: `pdf_page` is 0-based and `total_chapters` is the page count for PDFs.
 - Apple Books collections are read from `ZBKCOLLECTIONMEMBER` / `ZBKCOLLECTION` and used for goal suggestions.
 - Preview titles come from Spotlight (`kMDItemTitle`), falling back to a cleaned-up file name.

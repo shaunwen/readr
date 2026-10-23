@@ -47,7 +47,10 @@ TUI keys: `Tab`/`1-4` screens, `j`/`k` move, `Enter` resume, `a` add, `f` finish
 
 ## Reminders
 
-- Every `remind.interval` (default 2h) from `remind.start` (09:00) until `nightly.at`, while today is under the goal: a herdr notification such as `readr: 8 min to go today / Walden p.9/300 (bookokrat) · readr go`. If herdr is not reachable, a macOS notification.
+- Every `remind.interval` (default 2h) from `remind.start` (09:00) until `nightly.at`, while today is under the goal: a notification such as `readr: 8 min to go today / Walden p.9/300 (bookokrat) · readr go`.
+- Where notifications go is `notify.channel`:
+  - `system` (default): macOS Notification Center through `terminal-notifier`, with sound, replacing the previous readr reminder. Install it with `brew install terminal-notifier`, then allow it under System Settings > Notifications (if it doesn't appear there, launch it once with `open -n "$(brew --prefix terminal-notifier)/terminal-notifier.app"`). Without it, readr falls back to `osascript`, where notifications show as "Script Editor".
+  - `herdr`: `herdr notification show`, which follows herdr's own toast setting (`[ui.toast] delivery`), falling back to `system` when herdr isn't reachable.
 - Once the goal is reached: one "done for today" notice, then nothing more that day.
 - At `nightly.at` (default 21:00), if today is under the goal: a notification and an email. A check missed while the Mac slept runs on wake, the same day only. Each reminder is sent at most once.
 
