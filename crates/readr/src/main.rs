@@ -301,10 +301,9 @@ fn notify_test(app: &App) -> Result<String> {
     let next = next::next_up(app)?.map(|n| n.describe());
     let left = minutes(remaining(today.total, today.goal));
     let (title, body) = remind::remind_text(left, next.as_deref());
-    Ok(match notify::notify(&title, &body)? {
-        notify::Channel::Herdr => format!("shown in herdr: {title} / {body}\n"),
-        notify::Channel::MacOs { herdr_error } => {
-            format!("shown as a macOS notification (herdr: {herdr_error}): {title} / {body}\n")
-        }
-    })
+    let delivery = notify::notify(app.config.notify.channel, &title, &body)?;
+    Ok(format!(
+        "sent via {}: {title} / {body}\n",
+        delivery.describe()
+    ))
 }

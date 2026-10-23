@@ -31,18 +31,18 @@ impl Reminders {
         match &due {
             Due::Remind { .. } => {
                 let (title, body) = remind_text(left, next.as_deref());
-                send_notification(&title, &body);
+                send_notification(app, &title, &body);
                 app.db.mark_notified(day, &due.kind(), now.timestamp())?;
             }
             Due::GoalReached => {
                 let (title, body) = done_text(minutes(today.total), today.streak);
-                send_notification(&title, &body);
+                send_notification(app, &title, &body);
                 app.db.mark_notified(day, &due.kind(), now.timestamp())?;
             }
             Due::Nightly => {
                 if !already(NIGHTLY_NOTICE) {
                     let (title, body) = remind_text(left, next.as_deref());
-                    send_notification(&title, &body);
+                    send_notification(app, &title, &body);
                     app.db.mark_notified(day, NIGHTLY_NOTICE, now.timestamp())?;
                 }
                 let Some(settings) = &app.config.nightly.email else {
@@ -75,12 +75,9 @@ impl Reminders {
     }
 }
 
-fn send_notification(title: &str, body: &str) {
-    match notify::notify(title, body) {
-        Ok(notify::Channel::Herdr) => log(&format!("notified in herdr: {title}")),
-        Ok(notify::Channel::MacOs { herdr_error }) => log(&format!(
-            "notified via macOS (herdr: {herdr_error}): {title}"
-        )),
+fn send_notification(app: &App, title: &str, body: &str) {
+    match notify::notify(app.config.notify.channel, title, body) {
+        Ok(delivery) => log(&format!("notified via {}: {title}", delivery.describe())),
         Err(error) => log(&format!("{error:#}")),
     }
 }

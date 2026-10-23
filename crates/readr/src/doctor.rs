@@ -2,7 +2,7 @@ use std::fmt::Write;
 use std::process::Command;
 
 use anyhow::Result;
-use readr_core::config::DEFAULT_CONFIG_TOML;
+use readr_core::config::{DEFAULT_CONFIG_TOML, NotifyChannel};
 use readr_core::readers::desktop::Desktop;
 use readr_core::readers::{MacDesktop, apple_books, bookokrat, preview};
 
@@ -133,17 +133,32 @@ pub fn doctor(app: &App) -> Result<String> {
         "macOS asks once to let readr control Preview (to read the open document)",
     );
 
-    let herdr = Command::new("herdr")
-        .args(["status", "server"])
+    let terminal_notifier = Command::new("terminal-notifier")
+        .arg("-help")
         .output()
-        .is_ok_and(|output| output.status.success());
-    if herdr {
-        report.ok("herdr", "reminders show as herdr notifications");
-    } else {
-        report.info(
-            "herdr",
-            "not reachable; reminders fall back to macOS notifications",
-        );
+        .is_ok();
+    let herdr_up = || {
+        Command::new("herdr")
+            .args(["status", "server"])
+            .output()
+            .is_ok_and(|output| output.status.success())
+    };
+    match (app.config.notify.channel, terminal_notifier) {
+        (NotifyChannel::Herdr, _) if herdr_up() => {
+            report.ok("reminders", "herdr notifications (notify.channel = \"herdr\")")
+        }
+        (NotifyChannel::Herdr, true) => report.info(
+            "reminders",
+            "herdr not reachable; falling back to terminal-notifier",
+        ),
+        (NotifyChannel::System, true) => report.ok(
+            "reminders",
+            "macOS Notification Center via terminal-notifier, with sound",
+        ),
+        (_, false) => report.info(
+            "reminders",
+            "via osascript, shown as \"Script Editor\"; `brew install terminal-notifier` gives them their own entry",
+        ),
     }
 
     match &app.config.nightly.email {
