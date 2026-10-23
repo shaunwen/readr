@@ -4,6 +4,9 @@ use anyhow::{Result, bail};
 use readr_core::config::NotifyChannel;
 
 const SOUND: &str = "Glass";
+// terminal-notifier hands the name to UNNotificationSound, which only finds
+// sounds inside app bundles, not /System/Library/Sounds; "default" always plays.
+const TERMINAL_NOTIFIER_SOUND: &str = "default";
 const GROUP: &str = "readr";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,7 +88,7 @@ fn terminal_notifier_args(title: &str, body: &str, group: &str) -> Vec<String> {
         "-message".into(),
         escape_leading(body),
         "-sound".into(),
-        SOUND.into(),
+        TERMINAL_NOTIFIER_SOUND.into(),
         "-group".into(),
         group.into(),
     ]
@@ -208,7 +211,7 @@ mod tests {
                 "-message",
                 "Walden p.9/300 · readr go",
                 "-sound",
-                "Glass",
+                "default",
                 "-group",
                 "readr-1700000000000"
             ]
