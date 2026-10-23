@@ -200,6 +200,23 @@ pub const SETTINGS: &[Field] = &[
     ),
 ];
 
+const COLORS: &[&str] = &[
+    "",
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "magenta",
+    "cyan",
+    "gray",
+    "lightred",
+    "lightgreen",
+    "lightyellow",
+    "lightblue",
+    "lightmagenta",
+    "lightcyan",
+];
+
 pub const GOAL_FIELDS: &[Field] = &[
     field(
         "label",
@@ -226,9 +243,7 @@ pub const GOAL_FIELDS: &[Field] = &[
         "color",
         "Goal",
         "Color",
-        Kind::Choice(&[
-            "", "red", "green", "yellow", "blue", "magenta", "cyan", "gray",
-        ]),
+        Kind::Choice(COLORS),
         "Color on the shelf and in stats",
     ),
     field(
@@ -438,7 +453,8 @@ impl Goal {
                     value => Some(number(field, value)?),
                 }
             }
-            "color" => self.color = optional(value),
+            "color" if COLORS.contains(&value) => self.color = optional(value),
+            "color" => bail!("color must be one of {}", COLORS[1..].join(", ")),
             "folders" => self.folders = list(value),
             "books_collections" => self.books_collections = list(value),
             _ => bail!("unknown goal field {field:?}"),
@@ -653,6 +669,20 @@ mod tests {
 
         // then
         assert!(error.to_string().contains("lowercase letters"));
+    }
+
+    #[test]
+    fn goal_colors_come_from_the_terminal_palette() {
+        // given
+        let config = defaults();
+
+        // when
+        let light = config.with_goal_field("health", "color", "lightred");
+        let unknown = config.with_goal_field("health", "color", "teal");
+
+        // then
+        assert!(light.is_ok());
+        assert!(unknown.unwrap_err().to_string().contains("lightred"));
     }
 
     #[test]
