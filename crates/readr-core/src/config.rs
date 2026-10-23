@@ -271,7 +271,7 @@ impl Config {
         })
     }
 
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.daily_goal_minutes == 0 {
             bail!("daily_goal_minutes must be at least 1");
         }
@@ -301,6 +301,9 @@ impl Config {
                     "goal key {:?} must be lowercase letters, digits and dashes",
                     goal.key
                 );
+            }
+            if goal.label.trim().is_empty() {
+                bail!("goal {:?} needs a name", goal.key);
             }
             if !keys.insert(goal.key.as_str()) {
                 bail!("goal key {:?} is defined twice", goal.key);
