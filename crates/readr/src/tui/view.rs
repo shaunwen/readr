@@ -134,18 +134,18 @@ fn draw_today(frame: &mut Frame, area: Rect, model: &Model) {
 
     let ratio = (data.total.as_secs_f64() / data.goal.as_secs_f64().max(1.0)).clamp(0.0, 1.0);
     let done = data.total >= data.goal;
-    let label = format!(
-        "{} / {} min{}",
+    let title = format!(
+        " Today · {} / {} min{} ",
         minutes(data.total),
         minutes(data.goal),
-        if done { "  done" } else { "" }
+        if done { " · done" } else { "" }
     );
     frame.render_widget(
         Gauge::default()
-            .block(Block::bordered().title(" Today "))
+            .block(Block::bordered().title(title))
             .gauge_style(Style::new().fg(if done { Color::Green } else { ACCENT }))
             .ratio(ratio)
-            .label(label),
+            .label(""),
         gauge_area,
     );
 

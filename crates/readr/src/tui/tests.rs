@@ -206,7 +206,7 @@ fn today_screen_shows_progress_sessions_and_up_next() {
     let screen = render(&model);
 
     // then
-    assert!(screen.contains("12 / 20 min"), "{screen}");
+    assert!(screen.contains("Today · 12 / 20 min"), "{screen}");
     assert!(screen.contains("Walden"));
     assert!(screen.contains("p.4 → p.9"));
     assert!(screen.contains("reading"));
