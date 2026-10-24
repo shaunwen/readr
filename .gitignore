@@ -1,4 +1,5 @@
 /target
+local.mk
 
 # readr keeps its database in ~/.local/share/readr; never commit one, or reader data copied for debugging
 *.db

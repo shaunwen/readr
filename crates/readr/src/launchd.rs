@@ -3,7 +3,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 
-pub const LABEL: &str = "com.shaunwen.readr";
+pub const LABEL: &str = "io.github.shaunwen.readr";
 
 pub struct Agent {
     pub plist: PathBuf,
@@ -172,7 +172,7 @@ mod tests {
         // given
         let agent = Agent::new(
             Path::new("/Users/reader"),
-            PathBuf::from("/Users/reader/workspace/bin/readr"),
+            PathBuf::from("/Users/reader/.local/bin/readr"),
             vec![("PATH".into(), "/opt/homebrew/bin:/usr/bin:/bin".into())],
         );
 
@@ -180,7 +180,7 @@ mod tests {
         let plist = agent.render();
 
         // then
-        assert!(plist.contains("<string>/Users/reader/workspace/bin/readr</string>"));
+        assert!(plist.contains("<string>/Users/reader/.local/bin/readr</string>"));
         assert!(plist.contains("<string>daemon</string>\n        <string>run</string>"));
         assert!(
             plist.contains(
@@ -190,7 +190,7 @@ mod tests {
         assert!(plist.contains("<string>/Users/reader/Library/Logs/readr/daemon.log</string>"));
         assert_eq!(
             agent.plist,
-            PathBuf::from("/Users/reader/Library/LaunchAgents/com.shaunwen.readr.plist")
+            PathBuf::from("/Users/reader/Library/LaunchAgents/io.github.shaunwen.readr.plist")
         );
     }
 
@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn running_service_reports_its_pid() {
         // given
-        let print = "gui/501/com.shaunwen.readr = {\n\tactive count = 1\n\tstate = running\n\tpid = 4242\n}";
+        let print = "gui/501/io.github.shaunwen.readr = {\n\tactive count = 1\n\tstate = running\n\tpid = 4242\n}";
 
         // when
         let state = parse_state(print);
@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn stopped_service_reports_its_state() {
         // given
-        let print = "gui/501/com.shaunwen.readr = {\n\tstate = not running\n}";
+        let print = "gui/501/io.github.shaunwen.readr = {\n\tstate = not running\n}";
 
         // when
         let state = parse_state(print);
