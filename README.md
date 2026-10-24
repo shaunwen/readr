@@ -4,16 +4,25 @@ Track at least 20 minutes of reading a day across bookokrat, Preview and Apple B
 
 You keep reading in your usual readers. A background daemon notices page turns and which reader is in front, records sessions, and reads each reader's own saved position, so readr never asks where you stopped.
 
+## Requirements
+
+- macOS (it reads macOS reader files and uses macOS APIs and launchd)
+- Rust 1.88 or newer
+- At least one of [bookokrat](https://github.com/bugzmanov/bookokrat), Preview or Apple Books
+- Optional: [Rio](https://rioterm.com) to open bookokrat books in their own window, [herdr](https://github.com/herdrdev/herdr) as a notification channel or for opening books, and `terminal-notifier` (`brew install terminal-notifier`) for notifications with their own entry in Notification Center
+
 ## Install
 
 ```bash
-make install            # lint + tests + release build, copies to ~/workspace/bin/readr
+make install            # lint + tests + release build, copies to ~/.local/bin/readr
 readr init              # creates the database with the default goals
-readr daemon install    # launchd agent com.shaunwen.readr, starts at login
-readr doctor            # checks config, readers, permissions, daemon, email
+readr daemon install    # launchd agent io.github.shaunwen.readr, starts at login
+readr doctor            # checks settings, readers, permissions, daemon, email
 ```
 
-Grant `~/workspace/bin/readr` two permissions in System Settings > Privacy & Security:
+`make install BIN_DIR=<dir>` installs elsewhere; put lasting overrides such as `BIN_DIR` or `CODESIGN_IDENTITY` in an untracked `local.mk`. Make sure the directory is on your `PATH`.
+
+Grant the installed `readr` two permissions in System Settings > Privacy & Security:
 
 - **Full Disk Access**, to read the Apple Books library.
 - **Accessibility**, to see which window is focused, so a page you read for longer than `max_page_minutes` still counts. The daemon asks for this on start.
@@ -107,4 +116,8 @@ make test      # unit and CLI tests
 cargo run -- daemon run   # tracker in the foreground
 ```
 
-`readr-core` holds the config, database, session engine, reader adapters, schedule and suggestion logic. `readr` holds the CLI, daemon loop, notifications, email, launchd and the ratatui TUI. See `docs/plan.md` for the design.
+`readr-core` holds the config, database, session engine, reader adapters, schedule and suggestion logic. `readr` holds the CLI, daemon loop, notifications, email, launchd and the ratatui TUI. See [docs/design.md](docs/design.md) for the design.
+
+## License
+
+[MIT](LICENSE)
