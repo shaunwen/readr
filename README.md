@@ -4,6 +4,14 @@ Track at least 20 minutes of reading a day across bookokrat, Preview and Apple B
 
 You keep reading in your usual readers. A background daemon notices page turns and which reader is in front, records sessions, and reads each reader's own saved position, so readr never asks where you stopped.
 
+![readr TUI: today's reading, the shelf, stats and settings](docs/images/demo.gif)
+
+| Shelf | Stats | Settings |
+|---|---|---|
+| ![Shelf: active books per goal, where you are and time left, then the queue](docs/images/shelf.png) | ![Stats: 16-week heatmap, minutes per goal this week, last 7 days](docs/images/stats.png) | ![Settings popup with reminders, email, tracking and goals](docs/images/settings.png) |
+
+The screenshots use made-up data; `make demo` opens the same TUI on it.
+
 ## Requirements
 
 - macOS (it reads macOS reader files and uses macOS APIs and launchd)
@@ -114,6 +122,8 @@ Data: `~/.local/share/readr/readr.db`. Daemon log: `~/Library/Logs/readr/daemon.
 make lint      # cargo fmt --check, clippy -D warnings
 make test      # unit and CLI tests
 cargo run -- daemon run   # tracker in the foreground
+make demo      # TUI on made-up books and sessions in target/demo; your own database is never opened
+make screenshots          # re-record docs/images with vhs (brew install vhs)
 ```
 
 `readr-core` holds the config, database, session engine, reader adapters, schedule and suggestion logic. `readr` holds the CLI, daemon loop, notifications, email, launchd and the ratatui TUI. See [docs/design.md](docs/design.md) for the design.
