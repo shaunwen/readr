@@ -34,6 +34,9 @@ impl ShelfRow {
 
     pub fn time_left(&self) -> Option<SignedDuration> {
         let at = self.position.as_ref()?.progress?;
+        if self.book.status == BookStatus::Done || at >= 1.0 {
+            return None;
+        }
         if self.read < 0.01 || self.time < SignedDuration::from_mins(10) {
             return None;
         }
@@ -413,6 +416,19 @@ mod tests {
 
         // then
         assert_eq!(left, Some(SignedDuration::from_mins(300)));
+    }
+
+    #[test]
+    fn a_finished_book_has_no_time_left() {
+        // given
+        let mut shelf_row = row(1.0, 0.9, 600);
+        shelf_row.book.status = BookStatus::Done;
+
+        // when
+        let left = shelf_row.time_left();
+
+        // then
+        assert_eq!(left, None);
     }
 
     #[test]
