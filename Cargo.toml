@@ -5,7 +5,10 @@ members = ["crates/readr-core", "crates/readr"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 license = "MIT"
+repository = "https://github.com/shaunwen/readr"
+publish = false
 
 [profile.release]
 lto = true

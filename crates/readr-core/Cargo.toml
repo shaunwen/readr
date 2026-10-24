@@ -4,6 +4,9 @@ description = "Reading sessions, shelf, config and reader adapters for readr"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
 
 [dependencies]
 anyhow = "1.0.104"
