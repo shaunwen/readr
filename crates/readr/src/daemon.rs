@@ -124,6 +124,8 @@ const DAEMON_PATH: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/s
 
 fn agent(app: &App) -> Result<Agent> {
     let program = std::env::current_exe()?.canonicalize()?;
+    let stable = launchd::stable_program(&program);
+    let program = if stable.exists() { stable } else { program };
     let mut env = vec![("PATH".to_string(), DAEMON_PATH.to_string())];
     for key in ["XDG_CONFIG_HOME", "XDG_DATA_HOME"] {
         if let Ok(value) = std::env::var(key) {

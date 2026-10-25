@@ -163,6 +163,20 @@ fn escape(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
+// Homebrew's Cellar path changes with every version and is removed on upgrade;
+// its opt/<formula> link always points at the installed version.
+pub fn stable_program(program: &Path) -> PathBuf {
+    let parts: Vec<_> = program.iter().collect();
+    match parts.iter().position(|part| *part == "Cellar") {
+        Some(cellar) if parts.len() > cellar + 3 => {
+            let prefix: PathBuf = parts[..cellar].iter().collect();
+            let rest: PathBuf = parts[cellar + 3..].iter().collect();
+            prefix.join("opt").join(parts[cellar + 1]).join(rest)
+        }
+        _ => program.to_path_buf(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,5 +262,29 @@ mod tests {
                 state: "not running".into()
             }
         );
+    }
+
+    #[test]
+    fn a_homebrew_install_runs_from_the_opt_link() {
+        // given
+        let program = Path::new("/opt/homebrew/Cellar/readr/0.1.0/bin/readr");
+
+        // when
+        let stable = stable_program(program);
+
+        // then
+        assert_eq!(stable, PathBuf::from("/opt/homebrew/opt/readr/bin/readr"));
+    }
+
+    #[test]
+    fn other_installs_keep_their_path() {
+        // given
+        let program = Path::new("/Users/reader/.local/bin/readr");
+
+        // when
+        let stable = stable_program(program);
+
+        // then
+        assert_eq!(stable, program);
     }
 }
