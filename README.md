@@ -21,6 +21,19 @@ The screenshots use made-up data; `make demo` opens the same TUI on it.
 
 ## Install
 
+With Homebrew (a prebuilt binary on Apple Silicon, built from source on Intel):
+
+```bash
+brew install shaunwen/tap/readr
+readr init
+readr daemon install
+readr doctor
+```
+
+After `brew upgrade readr`, run `readr daemon install` again to restart the tracker on the new version.
+
+From source:
+
 ```bash
 make install            # lint + tests + release build, copies to ~/.local/bin/readr
 readr init              # creates the database with the default goals
@@ -125,6 +138,8 @@ cargo run -- daemon run   # tracker in the foreground
 make demo      # TUI on made-up books and sessions in target/demo; your own database is never opened
 make screenshots          # re-record docs/images with vhs (brew install vhs)
 ```
+
+To release: bump `version` in `Cargo.toml`, tag `vX.Y.Z`, run `make dist` (Apple Silicon binary in `dist/`, signed like `make install`), attach it to the GitHub release, then update `url`, the arm64 resource and both `sha256` in `Formula/readr.rb` in [shaunwen/homebrew-tap](https://github.com/shaunwen/homebrew-tap).
 
 `readr-core` holds the config, database, session engine, reader adapters, schedule and suggestion logic. `readr` holds the CLI, daemon loop, notifications, email, launchd and the ratatui TUI. See [docs/design.md](docs/design.md) for the design.
 

@@ -6,7 +6,11 @@ LABEL := io.github.shaunwen.readr
 CODESIGN_IDENTITY ?= $(shell security find-identity -p codesigning 2>/dev/null | grep -q '"readr-dev"' && echo readr-dev)
 LAUNCHD_SERVICE := gui/$(shell id -u)/$(LABEL)
 
-.PHONY: build test lint install demo demo-data demo-tui screenshots
+.PHONY: build test lint install dist demo demo-data demo-tui screenshots
+
+VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+DIST_TARGET := aarch64-apple-darwin
+DIST := dist/readr-v$(VERSION)-$(DIST_TARGET).tar.gz
 
 DEMO_DIR := $(CURDIR)/target/demo
 DEMO_ENV := HOME=$(DEMO_DIR)/home XDG_CONFIG_HOME=$(DEMO_DIR)/config XDG_DATA_HOME=$(DEMO_DIR)/data
@@ -33,6 +37,15 @@ endif
 	cp target/release/readr $(BIN_DIR)/readr
 	@echo "installed $(BIN_DIR)/readr"
 	@launchctl kickstart -k $(LAUNCHD_SERVICE) 2>/dev/null && echo "restarted the daemon" || true
+
+# The release binary for the Homebrew tap. Signing with the same certificate as
+# earlier releases keeps users' Accessibility grant across upgrades.
+dist: lint test
+	MACOSX_DEPLOYMENT_TARGET=11.0 cargo build --release --target $(DIST_TARGET)
+	codesign --force --sign "$(or $(CODESIGN_IDENTITY),-)" --identifier $(LABEL) target/$(DIST_TARGET)/release/readr
+	@mkdir -p dist
+	tar -czf $(DIST) -C target/$(DIST_TARGET)/release readr -C $(CURDIR) LICENSE README.md
+	@shasum -a 256 $(DIST)
 
 # The demo runs on made-up data under target/demo and never opens your own database.
 demo: demo-data demo-tui
