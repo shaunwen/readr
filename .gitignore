@@ -12,3 +12,4 @@ local.mk
 *.sqlite-shm
 bookmarks.json
 *.ViewState.plist
+.DS_Store
