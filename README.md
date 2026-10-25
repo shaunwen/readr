@@ -21,7 +21,7 @@ The screenshots use made-up data; `make demo` opens the same TUI on it.
 
 ## Install
 
-With Homebrew (a prebuilt binary on Apple Silicon, built from source on Intel):
+With Homebrew (prebuilt binaries for Apple Silicon and Intel, macOS 11 or later):
 
 ```bash
 brew install shaunwen/tap/readr
@@ -139,7 +139,7 @@ make demo      # TUI on made-up books and sessions in target/demo; your own data
 make screenshots          # re-record docs/images with vhs (brew install vhs)
 ```
 
-To release: bump `version` in `Cargo.toml`, tag `vX.Y.Z`, run `make dist` (Apple Silicon binary in `dist/`, signed like `make install`), attach it to the GitHub release, then update `url`, the arm64 resource and both `sha256` in `Formula/readr.rb` in [shaunwen/homebrew-tap](https://github.com/shaunwen/homebrew-tap).
+To release: bump `version` in `Cargo.toml`, tag `vX.Y.Z`, run `make dist` (Apple Silicon and Intel binaries in `dist/`, signed like `make install`), attach it to the GitHub release, then update the source `url` and the `binary` resource URLs, with their `sha256`, in `Formula/readr.rb` in [shaunwen/homebrew-tap](https://github.com/shaunwen/homebrew-tap).
 
 `readr-core` holds the config, database, session engine, reader adapters, schedule and suggestion logic. `readr` holds the CLI, daemon loop, notifications, email, launchd and the ratatui TUI. See [docs/design.md](docs/design.md) for the design.
 
